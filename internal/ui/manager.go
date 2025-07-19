@@ -502,9 +502,24 @@ func (m *Manager) openClaudeCode() {
 		setupScript = filepath.Join(tempDir, "claude_k2_setup.ps1")
 
 		if useSystemConfig {
-			// 勾选了永久设置：删除临时脚本，使用永久环境变量
+			// 勾选了永久设置：删除临时脚本，使用PowerShell重新加载环境变量
 			os.Remove(setupScript)
-			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
+			// 使用PowerShell重新加载环境变量并启动Claude
+			psScript := fmt.Sprintf(`
+				Write-Host "正在重新加载环境变量..." -ForegroundColor Yellow
+				# 刷新当前进程的环境变量
+				foreach($level in "Machine","User") {
+					[Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
+						if($_.Name.StartsWith("ANTHROPIC") -or $_.Name.StartsWith("CLAUDE")) {
+							[Environment]::SetEnvironmentVariable($_.Name, $_.Value, "Process")
+						}
+					}
+				}
+				Write-Host "✅ 环境变量已刷新" -ForegroundColor Green
+				Write-Host "启动 Claude Code..." -ForegroundColor Cyan
+				claude
+			`)
+			cmd = exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", psScript)
 		} else {
 			// 未勾选永久设置：使用临时脚本（如果存在）
 			if _, err := os.Stat(setupScript); err == nil {

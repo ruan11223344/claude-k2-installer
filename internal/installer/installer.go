@@ -931,40 +931,9 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 
 	// 清理环境变量配置
 	if runtime.GOOS == "windows" {
-		// Windows: 清除永久环境变量
-		i.addLog("清除 Windows 环境变量...")
-		envVars := []string{
-			"ANTHROPIC_BASE_URL",
-			"ANTHROPIC_API_KEY", 
-			"ANTHROPIC_AUTH_TOKEN",
-			"CLAUDE_REQUEST_DELAY_MS",
-			"CLAUDE_MAX_CONCURRENT_REQUESTS",
-		}
-		
-		for _, envVar := range envVars {
-			// 清除用户级环境变量
-			cmd := exec.Command("reg", "delete", "HKCU\\Environment", "/v", envVar, "/f")
-			err := cmd.Run()
-			if err == nil {
-				i.addLog(fmt.Sprintf("✅ 已清除用户环境变量: %s", envVar))
-			}
-			
-			// 尝试清除系统级环境变量（需要管理员权限）
-			cmd = exec.Command("reg", "delete", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", "/v", envVar, "/f")
-			err = cmd.Run()
-			if err == nil {
-				i.addLog(fmt.Sprintf("✅ 已清除系统环境变量: %s", envVar))
-			}
-		}
-		
-		// 广播环境变量更改消息
-		i.addLog("刷新 Windows 环境变量...")
-		cmd := exec.Command("setx", "CLAUDE_REFRESH", "1")
-		cmd.Run()
-		// 删除临时变量
-		cmd = exec.Command("reg", "delete", "HKCU\\Environment", "/v", "CLAUDE_REFRESH", "/f")
-		cmd.Run()
-		
+		// Windows: 使用PowerShell脚本清除环境变量，避免卡死
+		i.addLog("使用PowerShell清除 Windows 环境变量...")
+		i.createWindowsRestoreScript()
 	} else {
 		// Mac/Linux: 清除永久环境变量
 		// Mac/Linux: 删除环境变量配置
@@ -1039,4 +1008,81 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 
 	i.addLog("Claude Code 配置已恢复到初始状态")
 	return nil
+}
+
+// createWindowsRestoreScript 创建Windows恢复脚本
+func (i *Installer) createWindowsRestoreScript() {
+	tempDir := os.TempDir()
+	scriptPath := filepath.Join(tempDir, "claude_restore.ps1")
+	
+	scriptContent := `# Claude Code 环境变量清理脚本
+$envVars = @(
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY", 
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_REQUEST_DELAY_MS",
+    "CLAUDE_MAX_CONCURRENT_REQUESTS"
+)
+
+Write-Host "开始清理 Claude Code 环境变量..." -ForegroundColor Yellow
+
+foreach ($envVar in $envVars) {
+    # 清除用户级环境变量
+    try {
+        [System.Environment]::SetEnvironmentVariable($envVar, $null, [System.EnvironmentVariableTarget]::User)
+        Write-Host "✅ 已清除用户环境变量: $envVar" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠️ 清除用户环境变量失败: $envVar" -ForegroundColor Yellow
+    }
+    
+    # 清除进程级环境变量
+    try {
+        [System.Environment]::SetEnvironmentVariable($envVar, $null, [System.EnvironmentVariableTarget]::Process)
+    } catch {}
+}
+
+# 清理临时脚本
+$tempScripts = @(
+    "$env:TEMP\claude_k2_setup.ps1",
+    "$env:TEMP\claude_k2_setup.bat"
+)
+
+foreach ($script in $tempScripts) {
+    if (Test-Path $script) {
+        try {
+            Remove-Item $script -Force
+            Write-Host "🗑️ 已删除临时脚本: $script" -ForegroundColor Cyan
+        } catch {
+            Write-Host "⚠️ 删除临时脚本失败: $script" -ForegroundColor Yellow
+        }
+    }
+}
+
+Write-Host "✅ Claude Code 环境变量清理完成！" -ForegroundColor Green
+Write-Host "请重启命令行窗口以确保环境变量生效" -ForegroundColor Cyan
+`
+
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	if err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 创建恢复脚本失败: %v", err))
+		return
+	}
+	
+	i.addLog(fmt.Sprintf("📝 已创建恢复脚本: %s", scriptPath))
+	
+	// 执行PowerShell脚本
+	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 执行恢复脚本失败: %v", err))
+	} else {
+		i.addLog("✅ PowerShell恢复脚本执行完成")
+		// 输出脚本执行结果
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("脚本输出: %s", string(output)))
+		}
+	}
+	
+	// 清理脚本文件
+	os.Remove(scriptPath)
 }
