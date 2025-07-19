@@ -479,12 +479,23 @@ func (i *Installer) installNodeJSMac() error {
 	// 检查是否有 Homebrew
 	cmd := exec.Command("brew", "--version")
 	if err := cmd.Run(); err != nil {
-		i.addLog("未检测到 Homebrew，将使用官方安装包")
-		i.addLog("")
-		i.addLog("💡 提示：如需安装 Homebrew，可在终端运行：")
-		i.addLog(`   /bin/zsh -c "$(curl -fsSL https://gitee.com/cunkai/HomebrewCN/raw/master/Homebrew.sh)"`)
-		i.addLog("")
-		return i.installNodeJSMacPkg()
+		i.addLog("未检测到 Homebrew，开始自动安装...")
+		
+		// 自动安装 Homebrew
+		if err := i.installHomebrewCN(); err != nil {
+			i.addLog(fmt.Sprintf("Homebrew 安装失败: %v", err))
+			i.addLog("将使用备用方案直接下载 Node.js 安装包")
+			return i.installNodeJSMacPkg()
+		}
+		
+		// 重新检查 Homebrew 是否安装成功
+		cmd = exec.Command("brew", "--version")
+		if err := cmd.Run(); err != nil {
+			i.addLog("Homebrew 安装后仍无法使用，使用备用方案...")
+			return i.installNodeJSMacPkg()
+		}
+		
+		i.addLog("✅ Homebrew 安装成功！")
 	}
 
 	i.addLog("配置 Homebrew 使用中国镜像源并安装 Node.js...")
@@ -545,6 +556,97 @@ fi
 		return i.installNodeJSMacPkg()
 	}
 	
+	return nil
+}
+
+// installHomebrewCN 使用国内镜像安装 Homebrew
+func (i *Installer) installHomebrewCN() error {
+	i.addLog("准备安装 Homebrew（使用国内镜像）...")
+	i.addLog("⚠️  安装需要管理员权限，系统将弹出密码输入框")
+	
+	tempDir := os.TempDir()
+	scriptPath := filepath.Join(tempDir, "install_homebrew.sh")
+	
+	// 创建安装脚本
+	scriptContent := `#!/bin/bash
+echo "开始安装 Homebrew..."
+
+# 检查是否已经安装
+if command -v brew >/dev/null 2>&1; then
+    echo "Homebrew 已经安装"
+    brew --version
+    exit 0
+fi
+
+# 使用国内镜像安装
+/bin/zsh -c "$(curl -fsSL https://gitee.com/cunkai/HomebrewCN/raw/master/Homebrew.sh)"
+
+# 检查安装结果
+if command -v brew >/dev/null 2>&1; then
+    echo "Homebrew 安装成功！"
+    brew --version
+    exit 0
+else
+    # 尝试为不同的安装路径设置 PATH
+    if [ -f "/opt/homebrew/bin/brew" ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -f "/usr/local/bin/brew" ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    
+    # 再次检查
+    if command -v brew >/dev/null 2>&1; then
+        echo "Homebrew 安装成功！"
+        brew --version
+        exit 0
+    else
+        echo "Homebrew 安装失败或需要重启终端"
+        exit 1
+    fi
+fi
+`
+
+	// 写入脚本文件
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	if err != nil {
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+
+	// 使用 osascript 以管理员权限执行
+	// 这会弹出系统的密码输入对话框
+	executeScript := fmt.Sprintf(`do shell script "bash %s 2>&1" with administrator privileges`, scriptPath)
+	cmd := exec.Command("osascript", "-e", executeScript)
+	
+	// 执行并获取输出
+	output, err := cmd.CombinedOutput()
+	if len(output) > 0 {
+		// 将输出按行分割并添加到日志
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				i.addLog(line)
+			}
+		}
+	}
+	
+	if err != nil {
+		// 如果用户取消了密码输入，会返回错误
+		if strings.Contains(err.Error(), "User canceled") {
+			return fmt.Errorf("用户取消了密码输入")
+		}
+		return fmt.Errorf("安装失败: %v", err)
+	}
+
+	// 设置 PATH 环境变量
+	if _, err := os.Stat("/opt/homebrew/bin/brew"); err == nil {
+		os.Setenv("PATH", fmt.Sprintf("/opt/homebrew/bin:%s", os.Getenv("PATH")))
+		i.addLog("已添加 /opt/homebrew/bin 到 PATH")
+	} else if _, err := os.Stat("/usr/local/bin/brew"); err == nil {
+		os.Setenv("PATH", fmt.Sprintf("/usr/local/bin:%s", os.Getenv("PATH")))
+		i.addLog("已添加 /usr/local/bin 到 PATH")
+	}
+
 	return nil
 }
 
