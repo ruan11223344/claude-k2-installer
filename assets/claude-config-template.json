@@ -1,0 +1,21 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
+    "ANTHROPIC_API_KEY": "{{API_KEY}}",
+    "CLAUDE_REQUEST_DELAY": "2000"
+  },
+  "customApiKeyResponses": {
+    "approved": ["{{API_KEY_SUFFIX}}"],
+    "rejected": []
+  },
+  "rateLimits": {
+    "requestsPerMinute": 30,
+    "requestDelay": 2000,
+    "maxRetries": 10,
+    "retryDelay": 2000
+  },
+  "settings": {
+    "autoRetry": true,
+    "showRateLimitWarnings": true
+  }
+}
