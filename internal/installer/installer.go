@@ -40,17 +40,18 @@ func (i *Installer) Install() {
 	defer close(i.Progress)
 
 	steps := []struct {
-		name   string
-		fn     func() error
-		weight float64
+		name         string
+		fn           func() error
+		weight       float64
+		allowFailure bool // 允许失败并继续的标志
 	}{
-		{"检查系统环境", i.checkSystem, 5},
-		{"检测 Node.js", i.checkNodeJS, 10},
-		{"安装 Node.js", i.installNodeJS, 20},
-		{"检测 Git", i.checkGit, 10},
-		{"安装 Git", i.installGit, 20},
-		{"安装 Claude Code", i.installClaudeCode, 20},
-		{"验证安装", i.verifyInstallation, 5},
+		{"检查系统环境", i.checkSystem, 5, false},
+		{"检测 Node.js", i.checkNodeJS, 10, true},  // 允许检测失败，因为后面会安装
+		{"安装 Node.js", i.installNodeJS, 20, false},
+		{"检测 Git", i.checkGit, 10, true},          // 允许检测失败，因为后面会安装
+		{"安装 Git", i.installGit, 20, false},
+		{"安装 Claude Code", i.installClaudeCode, 20, false},
+		{"验证安装", i.verifyInstallation, 5, false},
 	}
 
 	totalWeight := 0.0
@@ -65,13 +66,21 @@ func (i *Installer) Install() {
 
 		err := step.fn()
 		if err != nil {
-			i.sendProgress(step.name, fmt.Sprintf("%s失败: %v", step.name, err), currentProgress/totalWeight)
-			i.sendError(fmt.Errorf("%s失败: %v", step.name, err))
-			return
+			if step.allowFailure {
+				// 对于允许失败的步骤，记录但继续执行
+				i.addLog(fmt.Sprintf("⚠️ %s失败，继续下一步: %v", step.name, err))
+				i.sendProgress(step.name, fmt.Sprintf("%s未通过，继续安装", step.name), currentProgress/totalWeight)
+			} else {
+				// 对于不允许失败的步骤，停止安装
+				i.sendProgress(step.name, fmt.Sprintf("%s失败: %v", step.name, err), currentProgress/totalWeight)
+				i.sendError(fmt.Errorf("%s失败: %v", step.name, err))
+				return
+			}
+		} else {
+			i.sendProgress(step.name, fmt.Sprintf("%s完成", step.name), currentProgress/totalWeight)
 		}
 
 		currentProgress += step.weight
-		i.sendProgress(step.name, fmt.Sprintf("%s完成", step.name), currentProgress/totalWeight)
 	}
 
 	i.sendProgress("完成", "所有组件安装完成！", 1.0)
