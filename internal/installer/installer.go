@@ -741,14 +741,33 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 
 	// 创建 .claude.json 文件以跳过登录
 	claudeJsonPath := filepath.Join(home, ".claude.json")
+	backupPath := claudeJsonPath + ".backup"
 	claudeJson := `{
   "hasCompletedOnboarding": true
 }`
-	err = os.WriteFile(claudeJsonPath, []byte(claudeJson), 0644)
-	if err != nil {
-		i.addLog(fmt.Sprintf("⚠️ 创建 .claude.json 失败: %v", err))
+	
+	// 检查是否存在备份文件但主文件不存在
+	if _, err := os.Stat(claudeJsonPath); os.IsNotExist(err) {
+		if _, backupErr := os.Stat(backupPath); backupErr == nil {
+			// 从备份文件复制内容
+			if backupData, readErr := os.ReadFile(backupPath); readErr == nil {
+				if writeErr := os.WriteFile(claudeJsonPath, backupData, 0644); writeErr == nil {
+					i.addLog("✅ 已从备份文件恢复 .claude.json")
+				} else {
+					i.addLog(fmt.Sprintf("⚠️ 从备份恢复失败: %v", writeErr))
+				}
+			}
+		} else {
+			// 创建新的配置文件
+			err = os.WriteFile(claudeJsonPath, []byte(claudeJson), 0644)
+			if err != nil {
+				i.addLog(fmt.Sprintf("⚠️ 创建 .claude.json 失败: %v", err))
+			} else {
+				i.addLog("✅ 已创建 .claude.json 以跳过登录流程")
+			}
+		}
 	} else {
-		i.addLog("✅ 已创建 .claude.json 以跳过登录流程")
+		i.addLog("✅ .claude.json 文件已存在")
 	}
 
 	i.addLog("K2 API 配置完成")
