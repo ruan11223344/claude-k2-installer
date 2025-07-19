@@ -161,6 +161,33 @@ func (i *Installer) checkNodeJS() error {
 		// Windows 特殊处理：检查常见的安装位置
 		if runtime.GOOS == "windows" {
 			i.addLog("正在检查 Windows 常见的 Node.js 安装位置...")
+			
+			// 先检查PATH中的nodejs目录
+			pathDirs := strings.Split(pathEnv, ";")
+			for _, dir := range pathDirs {
+				dir = strings.TrimSpace(dir)
+				if strings.Contains(strings.ToLower(dir), "nodejs") {
+					nodeExe := filepath.Join(dir, "node.exe")
+					i.addLog(fmt.Sprintf("检查PATH中的目录: %s", dir))
+					if _, err := os.Stat(nodeExe); err == nil {
+						i.addLog(fmt.Sprintf("✅ 找到 node.exe: %s", nodeExe))
+						// 尝试运行
+						testCmd := exec.Command(nodeExe, "--version")
+						if testOutput, testErr := testCmd.Output(); testErr == nil {
+							version := strings.TrimSpace(string(testOutput))
+							i.addLog(fmt.Sprintf("版本: %s", version))
+							return i.validateNodeVersion(version)
+						} else {
+							i.addLog(fmt.Sprintf("⚠️ 无法执行 %s: %v", nodeExe, testErr))
+						}
+					} else {
+						i.addLog(fmt.Sprintf("❌ 目录存在但找不到 node.exe: %s", dir))
+						i.addLog("这可能是之前安装的残留环境变量")
+					}
+				}
+			}
+			
+			// 再检查标准安装位置
 			commonPaths := []string{
 				`C:\Program Files\nodejs\node.exe`,
 				`C:\Program Files (x86)\nodejs\node.exe`,
@@ -266,6 +293,25 @@ func (i *Installer) installNodeJS() error {
 }
 
 func (i *Installer) installNodeJSWindows() error {
+	// 首先清理可能存在的残留环境变量
+	i.addLog("清理可能存在的Node.js残留配置...")
+	
+	// 检查并清理空的nodejs目录
+	nodejsDir := `C:\Program Files\nodejs`
+	if info, err := os.Stat(nodejsDir); err == nil && info.IsDir() {
+		// 检查目录是否为空或只有残留文件
+		nodeExe := filepath.Join(nodejsDir, "node.exe")
+		if _, err := os.Stat(nodeExe); err != nil {
+			i.addLog(fmt.Sprintf("发现空的nodejs目录，尝试清理: %s", nodejsDir))
+			// 尝试删除空目录（如果不为空会失败，这样更安全）
+			if err := os.Remove(nodejsDir); err == nil {
+				i.addLog("✅ 已清理空的nodejs目录")
+			} else {
+				i.addLog(fmt.Sprintf("⚠️ 无法清理目录: %v", err))
+			}
+		}
+	}
+	
 	// 多个下载源，提高成功率
 	nodeURLs := []string{
 		"https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi",
@@ -298,12 +344,12 @@ func (i *Installer) installNodeJSWindows() error {
 	i.addLog("运行 Node.js 安装程序...")
 	i.addLog("注意：Node.js 安装可能需要几分钟时间，请耐心等待...")
 	
-	// 使用 /qb 而不是 /qn 以显示进度条但不需要用户交互
+	// 使用 /qn 完全静默安装，避免弹窗
 	// ADDLOCAL=ALL 确保安装所有组件包括 npm
 	// ALLUSERS=1 为所有用户安装
 	// /L*V 生成详细日志
 	logPath := filepath.Join(os.TempDir(), "nodejs_install.log")
-	cmd := exec.Command("msiexec", "/i", installerPath, "/qb", "/norestart", 
+	cmd := exec.Command("msiexec", "/i", installerPath, "/qn", "/norestart", 
 		"ADDLOCAL=ALL", "ALLUSERS=1", "/L*V", logPath)
 	
 	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
