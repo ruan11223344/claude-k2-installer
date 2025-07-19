@@ -323,161 +323,118 @@ func (i *Installer) installNodeJSWindows() error {
 		}
 	}
 	
-	// 使用PowerShell脚本下载和安装
-	i.addLog("使用PowerShell脚本下载和安装Node.js...")
+	// 使用批处理脚本下载和安装
+	i.addLog("创建Node.js安装脚本...")
 	
 	tempDir := os.TempDir()
-	scriptPath := filepath.Join(tempDir, "install_nodejs.ps1")
+	scriptPath := filepath.Join(tempDir, "install_nodejs.bat")
 	
-	// 创建PowerShell脚本
-	scriptContent := `
-# Node.js 安装脚本
-$ErrorActionPreference = "Stop"
+	// 创建批处理脚本内容
+	scriptContent := `@echo off
+chcp 65001 >nul
+echo Starting Node.js installation...
 
-# 下载源列表
-$nodeURLs = @(
-    "https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi",
-    "https://cdn.npmmirror.com/binaries/node/v24.1.0/node-v24.1.0-x64.msi",
-    "https://nodejs.org/dist/v24.1.0/node-v24.1.0-x64.msi"
+set "NODE_URL1=https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi"
+set "NODE_URL2=https://cdn.npmmirror.com/binaries/node/v24.1.0/node-v24.1.0-x64.msi"
+set "NODE_URL3=https://nodejs.org/dist/v24.1.0/node-v24.1.0-x64.msi"
+set "INSTALLER_PATH=%TEMP%\node-installer.msi"
+
+echo Downloading Node.js from mirror 1...
+powershell -Command "try { Invoke-WebRequest -Uri '%NODE_URL1%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 1
+    goto :install
 )
 
-$installerPath = "$env:TEMP\node-installer.msi"
-$downloaded = $false
+echo Download failed from mirror 1, trying mirror 2...
+powershell -Command "try { Invoke-WebRequest -Uri '%NODE_URL2%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 2
+    goto :install
+)
 
-# 尝试每个下载源
-foreach ($url in $nodeURLs) {
-    Write-Host "尝试下载: $url" -ForegroundColor Yellow
-    try {
-        # 使用 Invoke-WebRequest 下载，设置超时
-        $ProgressPreference = 'SilentlyContinue'  # 禁用进度条以提高速度
-        Invoke-WebRequest -Uri $url -OutFile $installerPath -TimeoutSec 30 -UseBasicParsing
-        
-        # 检查文件是否存在且大小合理（至少10MB）
-        if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 10MB)) {
-            Write-Host "✅ 下载成功" -ForegroundColor Green
-            $downloaded = $true
-            break
-        } else {
-            Write-Host "❌ 文件大小异常" -ForegroundColor Red
-            Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-        Write-Host "❌ 下载失败: $_" -ForegroundColor Red
-    }
-}
+echo Download failed from mirror 2, trying mirror 3...
+powershell -Command "try { Invoke-WebRequest -Uri '%NODE_URL3%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 3
+    goto :install
+)
 
-if (-not $downloaded) {
-    Write-Host "❌ 所有下载源都失败了" -ForegroundColor Red
-    exit 1
-}
+echo ERROR: All download sources failed
+exit /b 1
 
-# 安装 Node.js
-Write-Host "开始安装 Node.js..." -ForegroundColor Yellow
-$logPath = "$env:TEMP\nodejs_install.log"
+:install
+echo Installing Node.js...
+msiexec /i "%INSTALLER_PATH%" /qn /norestart ADDLOCAL=ALL ALLUSERS=1
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Node.js installation failed with code %ERRORLEVEL%
+    del /f /q "%INSTALLER_PATH%" 2>nul
+    exit /b %ERRORLEVEL%
+)
 
-try {
-    # 静默安装
-    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", $installerPath, "/qn", "/norestart", "ADDLOCAL=ALL", "ALLUSERS=1", "/L*V", $logPath -Wait -PassThru
-    
-    if ($process.ExitCode -eq 0) {
-        Write-Host "✅ Node.js 安装成功" -ForegroundColor Green
-    } else {
-        Write-Host "❌ Node.js 安装失败，退出代码: $($process.ExitCode)" -ForegroundColor Red
-        
-        # 显示部分安装日志
-        if (Test-Path $logPath) {
-            Write-Host "安装日志（最后50行）:" -ForegroundColor Yellow
-            Get-Content $logPath -Tail 50
-        }
-        exit $process.ExitCode
-    }
-} catch {
-    Write-Host "❌ 安装过程出错: $_" -ForegroundColor Red
-    exit 1
-} finally {
-    # 清理安装文件
-    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-}
+echo Node.js installation completed
+del /f /q "%INSTALLER_PATH%" 2>nul
 
-# 刷新环境变量
-Write-Host "刷新环境变量..." -ForegroundColor Yellow
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+echo Refreshing environment variables...
+for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SystemPath=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "UserPath=%%B"
+set "PATH=%SystemPath%;%UserPath%"
 
-# 验证安装
-Write-Host "验证 Node.js 安装..." -ForegroundColor Yellow
-try {
-    $nodeVersion = & node --version 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✅ Node.js 已成功安装: $nodeVersion" -ForegroundColor Green
-    } else {
-        # 尝试使用完整路径
-        $nodePath = "C:\Program Files\nodejs\node.exe"
-        if (Test-Path $nodePath) {
-            $nodeVersion = & $nodePath --version 2>&1
-            Write-Host "✅ Node.js 已安装到: $nodePath" -ForegroundColor Green
-            Write-Host "   版本: $nodeVersion" -ForegroundColor Green
-            Write-Host "⚠️  可能需要重启终端才能直接使用 'node' 命令" -ForegroundColor Yellow
-        } else {
-            Write-Host "⚠️  Node.js 已安装但需要重启终端才能使用" -ForegroundColor Yellow
-        }
-    }
-} catch {
-    Write-Host "⚠️  验证时出错，但安装可能已成功，请重启终端后再试" -ForegroundColor Yellow
-}
+echo Verifying Node.js installation...
+node --version >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    for /f "tokens=*" %%i in ('node --version') do echo Node.js installed successfully: %%i
+) else (
+    if exist "C:\Program Files\nodejs\node.exe" (
+        "C:\Program Files\nodejs\node.exe" --version >nul 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            for /f "tokens=*" %%i in ('"C:\Program Files\nodejs\node.exe" --version') do echo Node.js installed at: C:\Program Files\nodejs\node.exe [%%i]
+            echo You may need to restart terminal to use 'node' command
+        )
+    ) else (
+        echo WARNING: Node.js installed but not found in PATH
+    )
+)
 
-Write-Host "✅ Node.js 安装脚本执行完成" -ForegroundColor Green
+echo Installation script completed
+exit /b 0
 `
-
-	// 写入脚本文件
+	
+	// 写入脚本文件（使用UTF-8编码）
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return fmt.Errorf("创建安装脚本失败: %v", err)
 	}
 	defer os.Remove(scriptPath)
 	
-	// 执行PowerShell脚本
-	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
 	
-	// 创建管道读取输出
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("创建输出管道失败: %v", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("创建错误管道失败: %v", err)
-	}
+	// 执行批处理脚本
+	cmd := exec.Command("cmd", "/c", scriptPath)
+	cmd.Dir = tempDir
 	
-	// 启动命令
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动安装脚本失败: %v", err)
-	}
+	// 设置输出编码为UTF-8
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 	
-	// 实时读取输出
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			i.addLog(scanner.Text())
+	// 获取命令输出
+	output, err := cmd.CombinedOutput()
+	
+	// 将输出转换为字符串并逐行添加到日志
+	outputStr := string(output)
+	lines := strings.Split(outputStr, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			i.addLog(line)
 		}
-	}()
+	}
 	
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			i.addLog(fmt.Sprintf("错误: %s", scanner.Text()))
-		}
-	}()
-	
-	// 等待命令完成
-	if err := cmd.Wait(); err != nil {
+	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("Node.js 安装失败，退出代码: %d", exitErr.ExitCode())
 		}
 		return fmt.Errorf("Node.js 安装失败: %v", err)
 	}
-	
-	// 等待一下让输出完全显示
-	time.Sleep(2 * time.Second)
 	
 	// 再次验证安装
 	if err := i.checkNodeJS(); err == nil {
@@ -658,161 +615,118 @@ func (i *Installer) installGit() error {
 }
 
 func (i *Installer) installGitWindows() error {
-	// 使用PowerShell脚本下载和安装
-	i.addLog("使用PowerShell脚本下载和安装Git...")
+	// 使用批处理脚本下载和安装
+	i.addLog("创建Git安装脚本...")
 	
 	tempDir := os.TempDir()
-	scriptPath := filepath.Join(tempDir, "install_git.ps1")
+	scriptPath := filepath.Join(tempDir, "install_git.bat")
 	
-	// 创建PowerShell脚本
-	scriptContent := `
-# Git 安装脚本
-$ErrorActionPreference = "Stop"
+	// 创建批处理脚本内容
+	scriptContent := `@echo off
+chcp 65001 >nul
+echo Starting Git installation...
 
-# 下载源列表
-$gitURLs = @(
-    "https://cdn.npmmirror.com/binaries/git-for-windows/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
-    "https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
-    "https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.50.1.windows.1/Git-2.50.1-64-bit.exe"
+set "GIT_URL1=https://cdn.npmmirror.com/binaries/git-for-windows/v2.50.1.windows.1/Git-2.50.1-64-bit.exe"
+set "GIT_URL2=https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/Git-2.50.1-64-bit.exe"
+set "GIT_URL3=https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.50.1.windows.1/Git-2.50.1-64-bit.exe"
+set "INSTALLER_PATH=%TEMP%\git-installer.exe"
+
+echo Downloading Git from mirror 1...
+powershell -Command "try { Invoke-WebRequest -Uri '%GIT_URL1%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 1
+    goto :install
 )
 
-$installerPath = "$env:TEMP\git-installer.exe"
-$downloaded = $false
+echo Download failed from mirror 1, trying mirror 2...
+powershell -Command "try { Invoke-WebRequest -Uri '%GIT_URL2%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 2
+    goto :install
+)
 
-# 尝试每个下载源
-foreach ($url in $gitURLs) {
-    Write-Host "尝试下载: $url" -ForegroundColor Yellow
-    try {
-        # 使用 Invoke-WebRequest 下载，设置超时
-        $ProgressPreference = 'SilentlyContinue'  # 禁用进度条以提高速度
-        Invoke-WebRequest -Uri $url -OutFile $installerPath -TimeoutSec 30 -UseBasicParsing
-        
-        # 检查文件是否存在且大小合理（至少10MB）
-        if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 10MB)) {
-            Write-Host "✅ 下载成功" -ForegroundColor Green
-            $downloaded = $true
-            break
-        } else {
-            Write-Host "❌ 文件大小异常" -ForegroundColor Red
-            Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-        Write-Host "❌ 下载失败: $_" -ForegroundColor Red
-    }
-}
+echo Download failed from mirror 2, trying mirror 3...
+powershell -Command "try { Invoke-WebRequest -Uri '%GIT_URL3%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 30 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 3
+    goto :install
+)
 
-if (-not $downloaded) {
-    Write-Host "❌ 所有下载源都失败了" -ForegroundColor Red
-    exit 1
-}
+echo ERROR: All download sources failed
+exit /b 1
 
-# 安装 Git
-Write-Host "开始安装 Git..." -ForegroundColor Yellow
-$logPath = "$env:TEMP\git_install.log"
+:install
+echo Installing Git...
+"%INSTALLER_PATH%" /VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Git installation failed with code %ERRORLEVEL%
+    del /f /q "%INSTALLER_PATH%" 2>nul
+    exit /b %ERRORLEVEL%
+)
 
-try {
-    # 静默安装
-    $process = Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/LOG=$logPath" -Wait -PassThru
-    
-    if ($process.ExitCode -eq 0) {
-        Write-Host "✅ Git 安装成功" -ForegroundColor Green
-    } else {
-        Write-Host "❌ Git 安装失败，退出代码: $($process.ExitCode)" -ForegroundColor Red
-        
-        # 显示部分安装日志
-        if (Test-Path $logPath) {
-            Write-Host "安装日志（最后50行）:" -ForegroundColor Yellow
-            Get-Content $logPath -Tail 50
-        }
-        exit $process.ExitCode
-    }
-} catch {
-    Write-Host "❌ 安装过程出错: $_" -ForegroundColor Red
-    exit 1
-} finally {
-    # 清理安装文件
-    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-}
+echo Git installation completed
+del /f /q "%INSTALLER_PATH%" 2>nul
 
-# 刷新环境变量
-Write-Host "刷新环境变量..." -ForegroundColor Yellow
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+echo Refreshing environment variables...
+for /f "tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SystemPath=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "UserPath=%%B"
+set "PATH=%SystemPath%;%UserPath%"
 
-# 验证安装
-Write-Host "验证 Git 安装..." -ForegroundColor Yellow
-try {
-    $gitVersion = & git --version 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✅ Git 已成功安装: $gitVersion" -ForegroundColor Green
-    } else {
-        # 尝试使用完整路径
-        $gitPath = "C:\Program Files\Git\bin\git.exe"
-        if (Test-Path $gitPath) {
-            $gitVersion = & $gitPath --version 2>&1
-            Write-Host "✅ Git 已安装到: $gitPath" -ForegroundColor Green
-            Write-Host "   版本: $gitVersion" -ForegroundColor Green
-            Write-Host "⚠️  可能需要重启终端才能直接使用 'git' 命令" -ForegroundColor Yellow
-        } else {
-            Write-Host "⚠️  Git 已安装但需要重启终端才能使用" -ForegroundColor Yellow
-        }
-    }
-} catch {
-    Write-Host "⚠️  验证时出错，但安装可能已成功，请重启终端后再试" -ForegroundColor Yellow
-}
+echo Verifying Git installation...
+git --version >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    for /f "tokens=*" %%i in ('git --version') do echo Git installed successfully: %%i
+) else (
+    if exist "C:\Program Files\Git\bin\git.exe" (
+        "C:\Program Files\Git\bin\git.exe" --version >nul 2>&1
+        if %ERRORLEVEL% EQU 0 (
+            for /f "tokens=*" %%i in ('"C:\Program Files\Git\bin\git.exe" --version') do echo Git installed at: C:\Program Files\Git\bin\git.exe [%%i]
+            echo You may need to restart terminal to use 'git' command
+        )
+    ) else (
+        echo WARNING: Git installed but not found in PATH
+    )
+)
 
-Write-Host "✅ Git 安装脚本执行完成" -ForegroundColor Green
+echo Installation script completed
+exit /b 0
 `
-
-	// 写入脚本文件
+	
+	// 写入脚本文件（使用UTF-8编码）
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return fmt.Errorf("创建安装脚本失败: %v", err)
 	}
 	defer os.Remove(scriptPath)
 	
-	// 执行PowerShell脚本
-	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
 	
-	// 创建管道读取输出
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("创建输出管道失败: %v", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("创建错误管道失败: %v", err)
-	}
+	// 执行批处理脚本
+	cmd := exec.Command("cmd", "/c", scriptPath)
+	cmd.Dir = tempDir
 	
-	// 启动命令
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("启动安装脚本失败: %v", err)
-	}
+	// 设置输出编码为UTF-8
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 	
-	// 实时读取输出
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			i.addLog(scanner.Text())
+	// 获取命令输出
+	output, err := cmd.CombinedOutput()
+	
+	// 将输出转换为字符串并逐行添加到日志
+	outputStr := string(output)
+	lines := strings.Split(outputStr, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			i.addLog(line)
 		}
-	}()
+	}
 	
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			i.addLog(fmt.Sprintf("错误: %s", scanner.Text()))
-		}
-	}()
-	
-	// 等待命令完成
-	if err := cmd.Wait(); err != nil {
+	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("Git 安装失败，退出代码: %d", exitErr.ExitCode())
 		}
 		return fmt.Errorf("Git 安装失败: %v", err)
 	}
-	
-	// 等待一下让输出完全显示
-	time.Sleep(2 * time.Second)
 	
 	// 再次验证安装
 	if err := i.checkGit(); err == nil {
