@@ -94,10 +94,18 @@ func (i *Installer) checkNodeJS() error {
 		version := strings.TrimSpace(string(output))
 		i.addLog(fmt.Sprintf("检测到 Node.js: %s", version))
 
-		// 检查版本是否满足要求
-		if strings.Contains(version, "v16") || strings.Contains(version, "v18") || strings.Contains(version, "v20") {
-			i.addLog("Node.js 版本满足要求")
-			return nil
+		// 检查版本是否满足要求 - 提取主版本号
+		// 版本格式通常是 v16.14.0 或 v20.10.0
+		if strings.HasPrefix(version, "v") {
+			// 提取主版本号
+			parts := strings.Split(version[1:], ".")
+			if len(parts) >= 1 {
+				majorVersion, err := strconv.Atoi(parts[0])
+				if err == nil && majorVersion >= 16 {
+					i.addLog(fmt.Sprintf("Node.js 版本满足要求 (v%d >= v16)", majorVersion))
+					return nil
+				}
+			}
 		}
 
 		return fmt.Errorf("Node.js 版本过低，需要 v16 或更高版本")
