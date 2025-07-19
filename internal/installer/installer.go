@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1057,20 +1058,168 @@ func (i *Installer) verifyInstallation() error {
 }
 
 func (i *Installer) downloadFile(url, filepath string) error {
-	resp, err := http.Get(url)
+	// 创建带超时的 HTTP 客户端
+	// 注意：这是总体超时时间，包括连接和下载
+	client := &http.Client{
+		Timeout: 5 * time.Minute, // 5分钟总超时（大文件需要更长时间）
+		Transport: &http.Transport{
+			// 连接超时设置
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second, // 连接超时10秒
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			// 空闲连接设置
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+		},
+	}
+	
+	// 创建请求
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
+	
+	// 设置用户代理，避免被某些服务器拒绝
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	
+	i.addLog(fmt.Sprintf("开始下载: %s", url))
+	i.addLog("连接服务器...")
+	
+	// 发送请求
+	resp, err := client.Do(req)
+	if err != nil {
+		if strings.Contains(err.Error(), "timeout") {
+			return fmt.Errorf("连接超时，请检查网络或稍后重试")
+		}
+		return fmt.Errorf("连接失败: %v", err)
+	}
 	defer resp.Body.Close()
+	
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败，HTTP状态码: %d", resp.StatusCode)
+	}
 
+	// 获取文件大小
+	contentLength := resp.ContentLength
+	if contentLength > 0 {
+		i.addLog(fmt.Sprintf("文件大小: %.2f MB", float64(contentLength)/1024/1024))
+	} else {
+		i.addLog("文件大小: 未知")
+	}
+
+	// 创建输出文件
 	out, err := os.Create(filepath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
-	return err
+	// 创建带超时的进度读取器
+	progressReader := &progressReader{
+		Reader:      resp.Body,
+		Total:       contentLength,
+		Current:     0,
+		LastLog:     time.Now(),
+		LastRead:    time.Now(),
+		Installer:   i,
+		ReadTimeout: 30 * time.Second, // 30秒内必须有数据传输
+	}
+
+	// 使用缓冲复制，提高性能
+	buf := make([]byte, 64*1024) // 64KB 缓冲区（增大缓冲区）
+	_, err = io.CopyBuffer(out, progressReader, buf)
+	
+	if err != nil {
+		if err == io.ErrUnexpectedEOF {
+			return fmt.Errorf("下载中断，文件不完整")
+		}
+		return fmt.Errorf("下载失败: %v", err)
+	}
+	
+	i.addLog("✅ 下载完成")
+	return nil
+}
+
+// progressReader 包装 io.Reader 以报告下载进度
+type progressReader struct {
+	io.Reader
+	Total          int64
+	Current        int64
+	LastLog        time.Time
+	LastRead       time.Time
+	LastBytes      int64     // 上次记录时的字节数
+	StartTime      time.Time // 下载开始时间
+	Installer      *Installer
+	ReadTimeout    time.Duration
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	// 初始化开始时间
+	if pr.StartTime.IsZero() {
+		pr.StartTime = time.Now()
+		pr.LastBytes = 0
+	}
+	
+	// 检查读取超时
+	if time.Since(pr.LastRead) > pr.ReadTimeout && pr.Current > 0 {
+		return 0, fmt.Errorf("下载停滞：超过%d秒没有新数据", int(pr.ReadTimeout.Seconds()))
+	}
+	
+	n, err := pr.Reader.Read(p)
+	if n > 0 {
+		pr.Current += int64(n)
+		pr.LastRead = time.Now() // 更新最后读取时间
+	}
+	
+	// 每秒更新一次进度
+	if time.Since(pr.LastLog) >= time.Second {
+		if pr.Total > 0 {
+			percent := float64(pr.Current) * 100 / float64(pr.Total)
+			
+			// 计算瞬时速度（最近1秒的速度）
+			bytesInLastSecond := pr.Current - pr.LastBytes
+			instantSpeed := float64(bytesInLastSecond) / 1024 / 1024 // MB/s
+			
+			// 计算平均速度
+			totalElapsed := time.Since(pr.StartTime).Seconds()
+			avgSpeed := float64(pr.Current) / totalElapsed / 1024 / 1024 // MB/s
+			
+			// 使用平均速度预估剩余时间（更稳定）
+			remaining := pr.Total - pr.Current
+			var etaStr string
+			if avgSpeed > 0 {
+				etaSeconds := float64(remaining) / (avgSpeed * 1024 * 1024)
+				if etaSeconds < 60 {
+					etaStr = fmt.Sprintf("%.0f秒", etaSeconds)
+				} else if etaSeconds < 3600 {
+					etaStr = fmt.Sprintf("%.0f分钟", etaSeconds/60)
+				} else {
+					etaStr = fmt.Sprintf("%.1f小时", etaSeconds/3600)
+				}
+			} else {
+				etaStr = "计算中..."
+			}
+			
+			pr.Installer.addLog(fmt.Sprintf("下载进度: %.1f%% (%.2f/%.2f MB) 速度: %.2f MB/s 剩余: %s", 
+				percent, 
+				float64(pr.Current)/1024/1024, 
+				float64(pr.Total)/1024/1024,
+				instantSpeed,
+				etaStr))
+		} else {
+			pr.Installer.addLog(fmt.Sprintf("已下载: %.2f MB", float64(pr.Current)/1024/1024))
+		}
+		pr.LastBytes = pr.Current
+		pr.LastLog = time.Now()
+	}
+	
+	return n, err
 }
 
 func (i *Installer) sendProgress(step, message string, percent float64) {
