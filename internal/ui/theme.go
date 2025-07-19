@@ -73,7 +73,7 @@ func (m *CustomTheme) Size(name fyne.ThemeSizeName) float32 {
 }
 
 var (
-	DefaultWindowSize = fyne.NewSize(1200, 1000) // 进一步增大高度
+	DefaultWindowSize = fyne.NewSize(1440, 1000) // 宽度增加20%，从1200到1440
 	SuccessColor     = color.RGBA{R: 52, G: 199, B: 89, A: 255}
 	ErrorColor       = color.RGBA{R: 255, G: 59, B: 48, A: 255}
 	WarningColor     = color.RGBA{R: 255, G: 149, B: 0, A: 255}

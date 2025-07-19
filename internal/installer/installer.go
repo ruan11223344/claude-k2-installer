@@ -618,25 +618,62 @@ fi
 	executeScript := fmt.Sprintf(`do shell script "bash %s 2>&1" with administrator privileges`, scriptPath)
 	cmd := exec.Command("osascript", "-e", executeScript)
 	
-	// 执行并获取输出
-	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		// 将输出按行分割并添加到日志
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
-			if strings.TrimSpace(line) != "" {
-				i.addLog(line)
+	// 创建一个 channel 来接收安装结果
+	done := make(chan error, 1)
+	var outputStr string
+	
+	// 在 goroutine 中执行安装
+	go func() {
+		output, err := cmd.CombinedOutput()
+		outputStr = string(output)
+		if err != nil {
+			// 如果用户取消了密码输入
+			if strings.Contains(err.Error(), "User canceled") || strings.Contains(outputStr, "User canceled") {
+				done <- fmt.Errorf("用户取消了密码输入")
+				return
+			}
+			done <- fmt.Errorf("安装失败: %v", err)
+			return
+		}
+		done <- nil
+	}()
+	
+	// 显示进度提示
+	progressCount := 0
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case err := <-done:
+			// 处理输出
+			if outputStr != "" {
+				lines := strings.Split(outputStr, "\n")
+				for _, line := range lines {
+					if strings.TrimSpace(line) != "" {
+						i.addLog(line)
+					}
+				}
+			}
+			if err != nil {
+				return err
+			}
+			goto homebrewInstallComplete
+		case <-ticker.C:
+			progressCount++
+			if progressCount <= 1 {
+				i.addLog("🔐 等待用户输入密码...")
+			} else if progressCount <= 10 {
+				i.addLog("📦 正在安装 Homebrew，这可能需要几分钟...")
+			} else if progressCount <= 20 {
+				i.addLog("⏳ Homebrew 安装仍在进行中...")
+			} else {
+				i.addLog("⏱️  安装时间较长，请耐心等待（首次安装可能需要 5-10 分钟）...")
 			}
 		}
 	}
 	
-	if err != nil {
-		// 如果用户取消了密码输入，会返回错误
-		if strings.Contains(err.Error(), "User canceled") {
-			return fmt.Errorf("用户取消了密码输入")
-		}
-		return fmt.Errorf("安装失败: %v", err)
-	}
+homebrewInstallComplete:
 
 	// 设置 PATH 环境变量
 	if _, err := os.Stat("/opt/homebrew/bin/brew"); err == nil {
@@ -751,19 +788,66 @@ exit 0
 	i.addLog("⚠️  系统将弹出密码输入框，请输入您的密码")
 	
 	// 使用 osascript 以管理员权限安装
-	installScript := fmt.Sprintf(`do shell script "installer -pkg '%s' -target /" with administrator privileges`, installerPath)
+	// 简化命令，让安装更快
+	installScript := fmt.Sprintf(`do shell script "installer -pkg '%s' -target / -verboseR" with administrator privileges`, installerPath)
 	installCmd := exec.Command("osascript", "-e", installScript)
 	
-	output, err := installCmd.CombinedOutput()
-	if err != nil {
-		// 如果用户取消了密码输入
-		if strings.Contains(err.Error(), "User canceled") {
-			return fmt.Errorf("用户取消了密码输入")
+	// 创建一个 channel 来接收安装结果
+	done := make(chan error, 1)
+	
+	// 在 goroutine 中执行安装
+	go func() {
+		output, err := installCmd.CombinedOutput()
+		if err != nil {
+			// 如果用户取消了密码输入
+			if strings.Contains(err.Error(), "User canceled") || strings.Contains(string(output), "User canceled") {
+				done <- fmt.Errorf("用户取消了密码输入")
+				return
+			}
+			done <- fmt.Errorf("Node.js 安装失败: %v\n输出: %s", err, string(output))
+			return
 		}
-		return fmt.Errorf("Node.js 安装失败: %v\n输出: %s", err, string(output))
+		
+		// 解析输出中的有用信息
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.Contains(line, "installer:") {
+				i.addLog(line)
+			}
+		}
+		
+		done <- nil
+	}()
+	
+	// 显示进度提示
+	progressCount := 0
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				return err
+			}
+			i.addLog("✅ Node.js 安装完成！")
+			goto installComplete
+		case <-ticker.C:
+			progressCount++
+			if progressCount <= 1 {
+				i.addLog("🔐 等待用户输入密码...")
+			} else if progressCount <= 10 {
+				i.addLog("📦 正在安装 Node.js，请稍候...")
+			} else if progressCount <= 20 {
+				i.addLog("⏳ 安装仍在进行中...")
+			} else {
+				i.addLog("⏱️  安装时间较长，请耐心等待...")
+			}
+		}
 	}
 	
-	i.addLog("✅ Node.js 安装完成！")
+installComplete:
 
 	// 再次验证安装
 	if err := i.checkNodeJS(); err == nil {
