@@ -2,7 +2,6 @@ package installer
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +20,7 @@ import (
 type Installer struct {
 	Progress chan ProgressUpdate
 	logs     []string
-	closed   bool // 标记channel是否已关闭
+	closed   bool       // 标记channel是否已关闭
 	mu       sync.Mutex // 保护closed字段
 }
 
@@ -486,7 +485,7 @@ func (i *Installer) installNodeJSMac() error {
 
 	i.addLog("使用 Homebrew 安装 Node.js...")
 	cmd = exec.Command("brew", "install", "node")
-	
+
 	// 使用流式执行避免UI卡住
 	return i.executeCommandWithStreaming(cmd)
 }
@@ -756,7 +755,7 @@ exit /b 0
 func (i *Installer) installGitMac() error {
 	// macOS 通常自带 Git，如果没有，使用 Homebrew
 	cmd := exec.Command("brew", "install", "git")
-	
+
 	// 使用流式执行避免UI卡住
 	return i.executeCommandWithStreaming(cmd)
 }
@@ -780,10 +779,10 @@ func (i *Installer) installClaudeCode() error {
 
 	// 使用淘宝 npm 镜像
 	cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code", "--registry=https://registry.npmmirror.com")
-	
+
 	// 使用流式执行避免UI卡住
 	err := i.executeCommandWithStreaming(cmd)
-	
+
 	if err != nil {
 		return fmt.Errorf("安装 Claude Code 失败: %v", err)
 	}
@@ -1272,7 +1271,7 @@ func (i *Installer) sendProgress(step, message string, percent float64) {
 	i.mu.Lock()
 	closed := i.closed
 	i.mu.Unlock()
-	
+
 	if !closed {
 		select {
 		case i.Progress <- ProgressUpdate{
@@ -1291,7 +1290,7 @@ func (i *Installer) sendError(err error) {
 	i.mu.Lock()
 	closed := i.closed
 	i.mu.Unlock()
-	
+
 	if !closed {
 		select {
 		case i.Progress <- ProgressUpdate{
@@ -1310,7 +1309,7 @@ func (i *Installer) addLog(message string) {
 	i.mu.Lock()
 	closed := i.closed
 	i.mu.Unlock()
-	
+
 	if !closed {
 		// 同步发送到UI，确保实时显示
 		select {
@@ -1350,7 +1349,7 @@ func (i *Installer) ConfigureK2APIWithOptions(apiKey string, rpm string, useSyst
 		i.closed = false
 	}
 	i.mu.Unlock()
-	
+
 	// 配置完成后关闭新的channel
 	defer func() {
 		i.mu.Lock()
@@ -1360,7 +1359,7 @@ func (i *Installer) ConfigureK2APIWithOptions(apiKey string, rpm string, useSyst
 		}
 		i.mu.Unlock()
 	}()
-	
+
 	return i.configureK2APIWithOptions(apiKey, rpm, useSystemConfig)
 }
 
