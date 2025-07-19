@@ -570,12 +570,12 @@ func (m *Manager) showQRCodeDialog() {
 	content := widget.NewRichTextFromMarkdown("**微信号**: ruan11223344\n\n可以扫描二维码直接进群，或搜索微信号添加好友\n进群分享最新AI知识，一起学习进步！")
 	content.Wrapping = fyne.TextWrapWord
 
-	// 创建左右布局容器 - 左边60%图片，右边40%文字
-	leftContainer := container.NewVBox(qrImage)
-	rightContainer := container.NewVBox(title, content)
-
-	contentContainer := container.NewHSplit(leftContainer, rightContainer)
-	contentContainer.SetOffset(0.6) // 左侧(图片)60%，右侧(文字)40%
+	// 创建垂直布局容器 - 标题、二维码、文字内容
+	contentContainer := container.NewVBox(
+		title,
+		qrImage,
+		content,
+	)
 
 	// 显示自定义对话框
 	customDialog := dialog.NewCustom("加微信进群", "关闭", contentContainer, m.window)
