@@ -499,7 +499,7 @@ func (m *Manager) openClaudeCode() {
 	case "windows":
 		// Windows: 根据永久设置决定启动方式
 		tempDir := os.TempDir()
-		setupScript = filepath.Join(tempDir, "claude_k2_setup.bat")
+		setupScript = filepath.Join(tempDir, "claude_k2_setup.ps1")
 
 		if useSystemConfig {
 			// 勾选了永久设置：删除临时脚本，使用永久环境变量
@@ -508,7 +508,7 @@ func (m *Manager) openClaudeCode() {
 		} else {
 			// 未勾选永久设置：使用临时脚本（如果存在）
 			if _, err := os.Stat(setupScript); err == nil {
-				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\" && claude", setupScript))
+				cmd = exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", fmt.Sprintf("& '%s'; claude", setupScript))
 			} else {
 				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
 			}
