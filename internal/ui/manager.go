@@ -532,8 +532,14 @@ claude
 		} else {
 			// 未勾选永久设置：使用临时脚本（如果存在）
 			if _, err := os.Stat(setupScript); err == nil {
-				cmdStr := fmt.Sprintf("call \"%s\" && claude", setupScript)
-				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", cmdStr)
+				// 创建包装脚本避免引号问题
+				wrapperScript := filepath.Join(tempDir, "claude_wrapper.bat")
+				wrapperContent := fmt.Sprintf(`@echo off
+call "%s"
+claude
+`, setupScript)
+				os.WriteFile(wrapperScript, []byte(wrapperContent), 0755)
+				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", wrapperScript)
 			} else {
 				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
 			}
