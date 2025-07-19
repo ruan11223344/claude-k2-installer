@@ -1,164 +1,146 @@
-#!/bin/bash
+# Claude Code + K2 Installer Windows 构建脚本
+# PowerShell 版本
 
-# Claude Code + K2 Installer 构建脚本
+param(
+    [string]$AppName = "ClaudeK2Installer",
+    [string]$Version = "1.0.0"
+)
 
-# 设置颜色输出
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# 颜色输出函数
+function Write-ColorOutput {
+    param(
+        [string]$Message,
+        [string]$Color = "White"
+    )
+    Write-Host $Message -ForegroundColor $Color
+}
 
-echo -e "${GREEN}开始构建 Claude Code + K2 Installer...${NC}"
-
-# 设置应用名称
-APP_NAME="ClaudeK2Installer"
-VERSION="1.0.0"
-
-# 检测当前系统
-OS=$(uname -s)
-ARCH=$(uname -m)
-
-echo -e "${BLUE}检测到系统: $OS ($ARCH)${NC}"
+Write-ColorOutput "开始构建 Claude Code + K2 Installer (Windows)..." "Green"
+Write-ColorOutput "应用名称: $AppName" "Blue"
+Write-ColorOutput "版本: $Version" "Blue"
 
 # 清理旧的构建
-rm -rf build/
-mkdir -p build
+Write-ColorOutput "清理旧构建文件..." "Yellow"
+if (Test-Path "build") {
+    Remove-Item -Path "build" -Recurse -Force
+}
+New-Item -ItemType Directory -Path "build\windows" -Force | Out-Null
+
+# 检查Go环境
+Write-ColorOutput "检查Go环境..." "Yellow"
+try {
+    $goVersion = go version
+    Write-ColorOutput "✓ Go环境正常: $goVersion" "Green"
+} catch {
+    Write-ColorOutput "✗ Go环境未找到，请先安装Go" "Red"
+    exit 1
+}
 
 # 获取依赖
-echo -e "${YELLOW}获取依赖...${NC}"
-GOPROXY=https://goproxy.cn,direct go mod download
+Write-ColorOutput "获取Go依赖..." "Yellow"
+$env:GOPROXY = "https://goproxy.cn,direct"
+go mod download
+if ($LASTEXITCODE -ne 0) {
+    Write-ColorOutput "✗ 依赖获取失败" "Red"
+    exit 1
+}
 
-# 根据当前系统构建
-case "$OS" in
-    Darwin)
-        # macOS 构建
-        echo -e "${GREEN}构建 macOS 版本...${NC}"
-        mkdir -p build/macos
-        
-        if [ "$ARCH" = "arm64" ]; then
-            echo -e "${BLUE}构建 Apple Silicon 版本...${NC}"
-            go build -ldflags="-w -s" -tags bundled -o "build/macos/${APP_NAME}" .
-        else
-            echo -e "${BLUE}构建 Intel 版本...${NC}"
-            go build -ldflags="-w -s" -tags bundled -o "build/macos/${APP_NAME}" .
-        fi
-        
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✓ macOS 版本构建成功${NC}"
-        else
-            echo -e "${RED}✗ macOS 版本构建失败${NC}"
+# 检查并安装fyne工具
+Write-ColorOutput "检查fyne工具..." "Yellow"
+
+# 获取Go路径并添加到PATH
+$goPath = go env GOPATH
+$goBin = "$goPath\bin"
+$env:PATH += ";$goBin"
+
+# 检查fyne是否可用
+try {
+    $fyneVersion = fyne version 2>$null
+    if ($fyneVersion -match "deprecated") {
+        Write-ColorOutput "检测到旧版fyne，升级到最新版本..." "Yellow"
+        go install fyne.io/tools/cmd/fyne@latest
+        if ($LASTEXITCODE -ne 0) {
+            Write-ColorOutput "✗ fyne工具升级失败" "Red"
             exit 1
-        fi
-        ;;
-        
-    Linux)
-        # Linux 构建
-        echo -e "${GREEN}构建 Linux 版本...${NC}"
-        mkdir -p build/linux
-        go build -ldflags="-w -s" -tags bundled -o "build/linux/${APP_NAME}" .
-        
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✓ Linux 版本构建成功${NC}"
-        else
-            echo -e "${RED}✗ Linux 版本构建失败${NC}"
-            exit 1
-        fi
-        ;;
-        
-    MINGW*|MSYS*|CYGWIN*)
-        # Windows 构建
-        echo -e "${GREEN}构建 Windows 版本...${NC}"
-        mkdir -p build/windows
-        go build -ldflags="-H windowsgui -w -s" -tags bundled -o "build/windows/${APP_NAME}.exe" .
-        
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}✓ Windows 版本构建成功${NC}"
-        else
-            echo -e "${RED}✗ Windows 版本构建失败${NC}"
-            exit 1
-        fi
-        ;;
-        
-    *)
-        echo -e "${RED}不支持的操作系统: $OS${NC}"
+        }
+    }
+    Write-ColorOutput "✓ fyne工具可用" "Green"
+} catch {
+    Write-ColorOutput "安装fyne打包工具..." "Yellow"
+    go install fyne.io/tools/cmd/fyne@latest
+    if ($LASTEXITCODE -ne 0) {
+        Write-ColorOutput "✗ fyne工具安装失败" "Red"
         exit 1
-        ;;
-esac
+    }
+    Write-ColorOutput "✓ fyne工具安装成功" "Green"
+}
 
-# 如果是 macOS，创建 .app 包
-if [ "$OS" = "Darwin" ]; then
-    echo -e "${GREEN}创建 macOS .app 包...${NC}"
-    mkdir -p "build/macos/${APP_NAME}.app/Contents/MacOS"
-    mkdir -p "build/macos/${APP_NAME}.app/Contents/Resources"
+# 检查图标文件
+if (-not (Test-Path "Icon.png")) {
+    Write-ColorOutput "创建默认图标文件..." "Yellow"
+    # 创建一个简单的占位图标文件
+    New-Item -ItemType File -Path "Icon.png" -Force | Out-Null
+    Write-ColorOutput "⚠️  请在项目根目录添加实际的 Icon.png 图标文件" "Yellow"
+}
 
-    # 创建 Info.plist
-    cat > "build/macos/${APP_NAME}.app/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>${APP_NAME}</string>
-    <key>CFBundleIconFile</key>
-    <string>icon.icns</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.claude-k2.installer</string>
-    <key>CFBundleName</key>
-    <string>Claude K2 Installer</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>10.12</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-EOF
+# 使用fyne打包Windows应用
+Write-ColorOutput "使用fyne打包Windows应用..." "Blue"
+fyne package -os windows -name $AppName
 
-    # 复制可执行文件到 .app
-    cp "build/macos/${APP_NAME}" "build/macos/${APP_NAME}.app/Contents/MacOS/"
-fi
+if ($LASTEXITCODE -eq 0) {
+    # 检查生成的文件
+    $exeFile = "$AppName.exe"
+    if (Test-Path $exeFile) {
+        # 移动到build目录
+        Move-Item $exeFile "build\windows\"
+        Write-ColorOutput "✓ Windows版本构建成功" "Green"
+    } else {
+        Write-ColorOutput "✗ 可执行文件未找到: $exeFile" "Red"
+        exit 1
+    }
+} else {
+    Write-ColorOutput "✗ Windows版本构建失败" "Red"
+    exit 1
+}
 
-# 创建压缩包
-echo -e "${GREEN}创建发布包...${NC}"
-cd build
+# 创建发布包
+Write-ColorOutput "创建发布包..." "Green"
+$zipName = "$AppName-$Version-windows.zip"
 
-case "$OS" in
-    Darwin)
-        # macOS 压缩
-        if [ -d "macos/${APP_NAME}.app" ]; then
-            cd macos
-            zip -qr "../${APP_NAME}-${VERSION}-macos-${ARCH}.zip" "${APP_NAME}.app"
-            cd ..
-            echo -e "${GREEN}✓ 输出文件: build/${APP_NAME}-${VERSION}-macos-${ARCH}.zip${NC}"
-        else
-            cd macos
-            zip -q "../${APP_NAME}-${VERSION}-macos-${ARCH}.zip" "${APP_NAME}"
-            cd ..
-            echo -e "${GREEN}✓ 输出文件: build/${APP_NAME}-${VERSION}-macos-${ARCH}.zip${NC}"
-        fi
-        ;;
-        
-    Linux)
-        # Linux 压缩
-        cd linux
-        tar -czf "../${APP_NAME}-${VERSION}-linux-${ARCH}.tar.gz" "${APP_NAME}"
-        cd ..
-        echo -e "${GREEN}✓ 输出文件: build/${APP_NAME}-${VERSION}-linux-${ARCH}.tar.gz${NC}"
-        ;;
-        
-    MINGW*|MSYS*|CYGWIN*)
-        # Windows 压缩
-        cd windows
-        zip -q "../${APP_NAME}-${VERSION}-windows.zip" "${APP_NAME}.exe"
-        cd ..
-        echo -e "${GREEN}✓ 输出文件: build/${APP_NAME}-${VERSION}-windows.zip${NC}"
-        ;;
-esac
+# 压缩文件
+try {
+    Add-Type -AssemblyName "System.IO.Compression.FileSystem"
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        (Join-Path $PWD "build\windows"),
+        (Join-Path $PWD "build\$zipName")
+    )
+    Write-ColorOutput "✓ 输出文件: build\$zipName" "Green"
+} catch {
+    Write-ColorOutput "压缩失败，尝试使用PowerShell Compress-Archive..." "Yellow"
+    Compress-Archive -Path "build\windows\*" -DestinationPath "build\$zipName" -Force
+    if ($LASTEXITCODE -eq 0) {
+        Write-ColorOutput "✓ 输出文件: build\$zipName" "Green"
+    } else {
+        Write-ColorOutput "✗ 压缩失败" "Red"
+        exit 1
+    }
+}
 
-cd ..
+# 显示构建结果
+Write-ColorOutput "构建完成！" "Green"
+Write-ColorOutput "构建结果：" "Blue"
 
-echo -e "${GREEN}构建完成！${NC}"
+if (Test-Path "build") {
+    Get-ChildItem "build" -Recurse | Format-Table Name, Length, LastWriteTime
+} else {
+    Write-ColorOutput "build目录为空" "Yellow"
+}
+
+# 显示文件大小
+$buildFile = "build\windows\$AppName.exe"
+if (Test-Path $buildFile) {
+    $fileSize = [math]::Round((Get-Item $buildFile).Length / 1MB, 2)
+    Write-ColorOutput "可执行文件大小: $fileSize MB" "Blue"
+}
+
+Write-ColorOutput "Windows构建脚本执行完成！" "Green"
