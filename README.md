@@ -7,11 +7,11 @@
 - 🚀 **一键安装**：自动检测并安装所有必需组件
 - 🔧 **智能配置**：自动配置环境变量和 API 设置
 - 📚 **引导教程**：内置详细的使用教程
-- 🖥️ **跨平台支持**：支持 Windows、macOS 和 Linux
+- 🖥️ **跨平台支持**：支持 Windows、macOS (Intel & Apple Silicon)
 
 ## 系统要求
 
-- Windows 10/11、macOS 10.12+ 或 Linux
+- Windows 10/11 (64位) 或 macOS 10.12+
 - 至少 4GB 内存
 - 稳定的网络连接
 
@@ -21,9 +21,9 @@
 
 从 Releases 页面下载对应系统的安装包：
 
-- Windows: `ClaudeK2Installer-1.0.0-windows.zip`
-- macOS: `ClaudeK2Installer-1.0.0-macos.zip`
-- Linux: `ClaudeK2Installer-1.0.0-linux.tar.gz`
+- Windows: `ClaudeK2Installer-1.0.0-windows-x86_64.zip`
+- macOS (Apple Silicon): `ClaudeK2Installer-1.0.0-macos-arm64.zip`
+- macOS (Intel): `ClaudeK2Installer-1.0.0-macos-x86_64.zip`
 
 ### 2. 运行程序
 
@@ -91,7 +91,7 @@ A: 免费账户的 RPM（每分钟请求数）限制为 3，不足以支持 Clau
 
 A: 请查看安装日志，常见原因：
 - 网络连接问题
-- 权限不足（Linux/macOS 可能需要 sudo）
+- 权限不足（macOS 需要输入管理员密码）
 - 杀毒软件拦截
 
 ### Q: 支持哪些系统？
@@ -99,7 +99,6 @@ A: 请查看安装日志，常见原因：
 A: 目前支持：
 - Windows 10/11 (64位)
 - macOS 10.12+ (Intel & Apple Silicon)
-- Linux (64位，主流发行版)
 
 ## 许可证
 
