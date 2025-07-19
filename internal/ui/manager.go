@@ -332,21 +332,25 @@ func (m *Manager) onInstallClick() {
 				return
 			}
 
-			// 更新进度
-			if m.progressBar != nil {
+			// 更新进度（只有百分比>=0时才更新进度条）
+			if update.Percent >= 0 && m.progressBar != nil {
 				m.progressBar.SetValue(update.Percent)
 			}
-			if m.statusLabel != nil {
+			
+			// 更新状态标签（只有非日志消息才更新状态）
+			if update.Step != "日志" && m.statusLabel != nil {
 				m.statusLabel.SetText(update.Message)
 			}
 
-			// 更新日志
+			// 实时更新日志显示
 			if m.logsDisplay != nil {
 				logs := m.installer.GetLogs()
 				logText := strings.Join(logs, "\n")
-				m.logsDisplay.SetText(logText)
-				// 滚动到底部
-				m.logsDisplay.CursorRow = len(logs)
+				m.updateUI(func() {
+					m.logsDisplay.SetText(logText)
+					// 滚动到底部
+					m.logsDisplay.CursorRow = len(logs)
+				})
 			}
 		}
 

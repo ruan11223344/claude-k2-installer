@@ -1034,6 +1034,17 @@ func (i *Installer) sendError(err error) {
 
 func (i *Installer) addLog(message string) {
 	i.logs = append(i.logs, message)
+	// 同步发送到UI，确保实时显示
+	select {
+	case i.Progress <- ProgressUpdate{
+		Step:    "日志",
+		Message: message,
+		Percent: -1, // -1 表示只更新日志，不更新进度条
+	}:
+		// 成功发送
+	default:
+		// channel满了或已关闭，忽略
+	}
 }
 
 func (i *Installer) GetLogs() []string {
