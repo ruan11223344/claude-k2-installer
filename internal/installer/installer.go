@@ -308,43 +308,37 @@ func (i *Installer) installNodeJSWindows() error {
 	
 	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
 	
-	// 设置较长的超时时间
-	timeout := 10 * time.Minute
-	done := make(chan error, 1)
+	// 直接同步执行，避免日志显示问题
+	output, err := cmd.CombinedOutput()
 	
-	go func() {
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			i.addLog(fmt.Sprintf("Node.js 安装程序执行失败: %v", err))
-			if len(output) > 0 {
-				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
-			}
-		} else {
-			i.addLog("Node.js 安装程序执行完成")
-			if len(output) > 0 {
-				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
-			}
+	if err != nil {
+		i.addLog(fmt.Sprintf("❌ Node.js 安装程序执行失败: %v", err))
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
 		}
-		done <- err
-	}()
+		
+		// 读取详细安装日志
+		if logData, logErr := os.ReadFile(logPath); logErr == nil && len(logData) > 0 {
+			i.addLog("=== Node.js 详细安装日志 ===")
+			logContent := string(logData)
+			// 只显示最后1000行，避免日志过长
+			lines := strings.Split(logContent, "\n")
+			if len(lines) > 1000 {
+				lines = lines[len(lines)-1000:]
+				i.addLog("... (日志已截断，显示最后1000行)")
+			}
+			i.addLog(strings.Join(lines, "\n"))
+			i.addLog("=== 安装日志结束 ===")
+		}
+		
+		// 等待用户看到错误信息
+		time.Sleep(5 * time.Second)
+		return fmt.Errorf("Node.js 安装失败: %v", err)
+	}
 	
-	select {
-	case err := <-done:
-		if err != nil {
-			// 读取安装日志
-			if logData, logErr := os.ReadFile(logPath); logErr == nil {
-				i.addLog("=== Node.js 安装日志 ===")
-				i.addLog(string(logData))
-				i.addLog("=== 安装日志结束 ===")
-			}
-			return fmt.Errorf("安装失败: %v", err)
-		}
-	case <-time.After(timeout):
-		// 强制终止进程
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		return fmt.Errorf("安装超时（超过 %v）", timeout)
+	i.addLog("✅ Node.js 安装程序执行完成")
+	if len(output) > 0 {
+		i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
 	}
 	
 	i.addLog("Node.js 安装完成，正在验证...")
@@ -580,43 +574,37 @@ func (i *Installer) installGitWindows() error {
 	
 	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
 	
-	// 设置较长的超时时间
-	timeout := 10 * time.Minute
-	done := make(chan error, 1)
+	// 直接同步执行，避免日志显示问题
+	output, err := cmd.CombinedOutput()
 	
-	go func() {
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			i.addLog(fmt.Sprintf("Git 安装程序执行失败: %v", err))
-			if len(output) > 0 {
-				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
-			}
-		} else {
-			i.addLog("Git 安装程序执行完成")
-			if len(output) > 0 {
-				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
-			}
+	if err != nil {
+		i.addLog(fmt.Sprintf("❌ Git 安装程序执行失败: %v", err))
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
 		}
-		done <- err
-	}()
+		
+		// 读取详细安装日志
+		if logData, logErr := os.ReadFile(logPath); logErr == nil && len(logData) > 0 {
+			i.addLog("=== Git 详细安装日志 ===")
+			logContent := string(logData)
+			// 只显示最后1000行，避免日志过长
+			lines := strings.Split(logContent, "\n")
+			if len(lines) > 1000 {
+				lines = lines[len(lines)-1000:]
+				i.addLog("... (日志已截断，显示最后1000行)")
+			}
+			i.addLog(strings.Join(lines, "\n"))
+			i.addLog("=== 安装日志结束 ===")
+		}
+		
+		// 等待用户看到错误信息
+		time.Sleep(5 * time.Second)
+		return fmt.Errorf("Git 安装失败: %v", err)
+	}
 	
-	select {
-	case err := <-done:
-		if err != nil {
-			// 读取安装日志
-			if logData, logErr := os.ReadFile(logPath); logErr == nil {
-				i.addLog("=== Git 安装日志 ===")
-				i.addLog(string(logData))
-				i.addLog("=== 安装日志结束 ===")
-			}
-			return fmt.Errorf("安装失败: %v", err)
-		}
-	case <-time.After(timeout):
-		// 强制终止进程
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		return fmt.Errorf("安装超时（超过 %v）", timeout)
+	i.addLog("✅ Git 安装程序执行完成")
+	if len(output) > 0 {
+		i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
 	}
 	
 	i.addLog("Git 安装完成，正在验证...")
