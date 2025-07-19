@@ -383,6 +383,21 @@ func (m *Manager) onInstallClick() {
 				return
 			}
 
+			// 监听配置阶段的日志更新
+			go func() {
+				for update := range m.installer.Progress {
+					if update.Step == "日志" && m.logsDisplay != nil {
+						logs := m.installer.GetLogs()
+						logText := strings.Join(logs, "\n")
+						m.updateUI(func() {
+							m.logsDisplay.SetText(logText)
+							// 滚动到底部
+							m.logsDisplay.CursorRow = len(logs)
+						})
+					}
+				}
+			}()
+
 			// 显示最终日志
 			fyne.Do(func() {
 				if m.logsDisplay != nil {

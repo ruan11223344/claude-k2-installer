@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -13,12 +14,15 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Installer struct {
 	Progress chan ProgressUpdate
 	logs     []string
+	closed   bool // 标记channel是否已关闭
+	mu       sync.Mutex // 保护closed字段
 }
 
 type ProgressUpdate struct {
@@ -38,7 +42,12 @@ func New() *Installer {
 // Install 开始安装过程
 func (i *Installer) Install() {
 	// 安装完成后关闭 channel
-	defer close(i.Progress)
+	defer func() {
+		i.mu.Lock()
+		i.closed = true
+		i.mu.Unlock()
+		close(i.Progress)
+	}()
 
 	steps := []struct {
 		name         string
@@ -414,25 +423,15 @@ exit /b 0
 
 	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
 
-	// 执行批处理脚本
+	// 执行批处理脚本 - 使用流式输出避免UI卡住
 	cmd := exec.Command("cmd", "/c", scriptPath)
 	cmd.Dir = tempDir
 
 	// 设置输出编码为UTF-8
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 
-	// 获取命令输出
-	output, err := cmd.CombinedOutput()
-
-	// 将输出转换为字符串并逐行添加到日志
-	outputStr := string(output)
-	lines := strings.Split(outputStr, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			i.addLog(line)
-		}
-	}
+	// 使用流式执行避免UI卡住
+	err = i.executeCommandWithStreaming(cmd)
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -487,10 +486,9 @@ func (i *Installer) installNodeJSMac() error {
 
 	i.addLog("使用 Homebrew 安装 Node.js...")
 	cmd = exec.Command("brew", "install", "node")
-	output, err := cmd.CombinedOutput()
-	i.addLog(string(output))
-
-	return err
+	
+	// 使用流式执行避免UI卡住
+	return i.executeCommandWithStreaming(cmd)
 }
 
 func (i *Installer) installNodeJSMacPkg() error {
@@ -527,17 +525,13 @@ func (i *Installer) installNodeJSLinux() error {
 		cmd.Run()
 
 		cmd = exec.Command("sudo", "apt-get", "install", "-y", "nodejs", "npm")
-		output, err := cmd.CombinedOutput()
-		i.addLog(string(output))
-		return err
+		return i.executeCommandWithStreaming(cmd)
 	}
 
 	if _, err := exec.LookPath("yum"); err == nil {
 		i.addLog("使用 yum 安装 Node.js...")
 		cmd := exec.Command("sudo", "yum", "install", "-y", "nodejs", "npm")
-		output, err := cmd.CombinedOutput()
-		i.addLog(string(output))
-		return err
+		return i.executeCommandWithStreaming(cmd)
 	}
 
 	return fmt.Errorf("无法自动安装 Node.js，请手动安装")
@@ -714,25 +708,15 @@ exit /b 0
 
 	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
 
-	// 执行批处理脚本
+	// 执行批处理脚本 - 使用流式输出避免UI卡住
 	cmd := exec.Command("cmd", "/c", scriptPath)
 	cmd.Dir = tempDir
 
 	// 设置输出编码为UTF-8
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 
-	// 获取命令输出
-	output, err := cmd.CombinedOutput()
-
-	// 将输出转换为字符串并逐行添加到日志
-	outputStr := string(output)
-	lines := strings.Split(outputStr, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			i.addLog(line)
-		}
-	}
+	// 使用流式执行避免UI卡住
+	err = i.executeCommandWithStreaming(cmd)
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -772,25 +756,20 @@ exit /b 0
 func (i *Installer) installGitMac() error {
 	// macOS 通常自带 Git，如果没有，使用 Homebrew
 	cmd := exec.Command("brew", "install", "git")
-	output, err := cmd.CombinedOutput()
-	i.addLog(string(output))
-
-	return err
+	
+	// 使用流式执行避免UI卡住
+	return i.executeCommandWithStreaming(cmd)
 }
 
 func (i *Installer) installGitLinux() error {
 	if _, err := exec.LookPath("apt-get"); err == nil {
 		cmd := exec.Command("sudo", "apt-get", "install", "-y", "git")
-		output, err := cmd.CombinedOutput()
-		i.addLog(string(output))
-		return err
+		return i.executeCommandWithStreaming(cmd)
 	}
 
 	if _, err := exec.LookPath("yum"); err == nil {
 		cmd := exec.Command("sudo", "yum", "install", "-y", "git")
-		output, err := cmd.CombinedOutput()
-		i.addLog(string(output))
-		return err
+		return i.executeCommandWithStreaming(cmd)
 	}
 
 	return fmt.Errorf("无法自动安装 Git，请手动安装")
@@ -801,13 +780,10 @@ func (i *Installer) installClaudeCode() error {
 
 	// 使用淘宝 npm 镜像
 	cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code", "--registry=https://registry.npmmirror.com")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	err := cmd.Run()
-	i.addLog(out.String())
-
+	
+	// 使用流式执行避免UI卡住
+	err := i.executeCommandWithStreaming(cmd)
+	
 	if err != nil {
 		return fmt.Errorf("安装 Claude Code 失败: %v", err)
 	}
@@ -1293,31 +1269,60 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 }
 
 func (i *Installer) sendProgress(step, message string, percent float64) {
-	i.Progress <- ProgressUpdate{
-		Step:    step,
-		Message: message,
-		Percent: percent,
+	i.mu.Lock()
+	closed := i.closed
+	i.mu.Unlock()
+	
+	if !closed {
+		select {
+		case i.Progress <- ProgressUpdate{
+			Step:    step,
+			Message: message,
+			Percent: percent,
+		}:
+			// 成功发送
+		default:
+			// channel满了，忽略
+		}
 	}
 }
 
 func (i *Installer) sendError(err error) {
-	i.Progress <- ProgressUpdate{
-		Error: err,
+	i.mu.Lock()
+	closed := i.closed
+	i.mu.Unlock()
+	
+	if !closed {
+		select {
+		case i.Progress <- ProgressUpdate{
+			Error: err,
+		}:
+			// 成功发送
+		default:
+			// channel满了，忽略
+		}
 	}
 }
 
 func (i *Installer) addLog(message string) {
 	i.logs = append(i.logs, message)
-	// 同步发送到UI，确保实时显示
-	select {
-	case i.Progress <- ProgressUpdate{
-		Step:    "日志",
-		Message: message,
-		Percent: -1, // -1 表示只更新日志，不更新进度条
-	}:
-		// 成功发送
-	default:
-		// channel满了或已关闭，忽略
+	// 检查channel是否已关闭
+	i.mu.Lock()
+	closed := i.closed
+	i.mu.Unlock()
+	
+	if !closed {
+		// 同步发送到UI，确保实时显示
+		select {
+		case i.Progress <- ProgressUpdate{
+			Step:    "日志",
+			Message: message,
+			Percent: -1, // -1 表示只更新日志，不更新进度条
+		}:
+			// 成功发送
+		default:
+			// channel满了，忽略
+		}
 	}
 }
 
@@ -1337,6 +1342,25 @@ func (i *Installer) ConfigureK2APIWithRateLimit(apiKey string, rpm string) error
 
 // ConfigureK2APIWithOptions 配置 API 和速率限制，带系统级配置选项
 func (i *Installer) ConfigureK2APIWithOptions(apiKey string, rpm string, useSystemConfig bool) error {
+	// 创建新的 Progress channel 用于配置阶段
+	i.mu.Lock()
+	if i.closed {
+		// 如果原channel已关闭，创建新的
+		i.Progress = make(chan ProgressUpdate, 100)
+		i.closed = false
+	}
+	i.mu.Unlock()
+	
+	// 配置完成后关闭新的channel
+	defer func() {
+		i.mu.Lock()
+		if !i.closed {
+			i.closed = true
+			close(i.Progress)
+		}
+		i.mu.Unlock()
+	}()
+	
 	return i.configureK2APIWithOptions(apiKey, rpm, useSystemConfig)
 }
 
@@ -1451,6 +1475,58 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 
 	i.addLog("Claude Code 配置已恢复到初始状态")
 	return nil
+}
+
+// executeCommandWithStreaming 执行命令并实时输出日志，避免UI卡住
+func (i *Installer) executeCommandWithStreaming(cmd *exec.Cmd) error {
+	// 创建管道以实时获取输出
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("创建输出管道失败: %v", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("创建错误管道失败: %v", err)
+	}
+
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动命令失败: %v", err)
+	}
+
+	// 并发读取输出
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 读取标准输出
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				i.addLog(line)
+			}
+		}
+	}()
+
+	// 读取错误输出
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				i.addLog(line)
+			}
+		}
+	}()
+
+	// 等待输出读取完成
+	wg.Wait()
+
+	// 等待命令执行完成
+	return cmd.Wait()
 }
 
 // createWindowsRestoreScript 创建Windows恢复脚本
