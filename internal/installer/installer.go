@@ -242,17 +242,33 @@ func (i *Installer) installNodeJS() error {
 }
 
 func (i *Installer) installNodeJSWindows() error {
-	// 下载 Node.js 安装程序
-	// 使用淘宝镜像源
-	nodeURL := "https://cdn.npmmirror.com/binaries/node/v20.10.0/node-v20.10.0-x64.msi"
+	// 多个下载源，提高成功率
+	nodeURLs := []string{
+		"https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi",
+		"https://cdn.npmmirror.com/binaries/node/v24.1.0/node-v24.1.0-x64.msi",
+		"https://nodejs.org/dist/v24.1.0/node-v24.1.0-x64.msi",
+	}
 
 	tempDir := os.TempDir()
 	installerPath := filepath.Join(tempDir, "node-installer.msi")
 
-	i.addLog("下载 Node.js 安装程序...")
-	err := i.downloadFile(nodeURL, installerPath)
-	if err != nil {
-		return fmt.Errorf("下载失败: %v", err)
+	var lastErr error
+	for idx, nodeURL := range nodeURLs {
+		i.addLog(fmt.Sprintf("尝试从源 %d 下载 Node.js 安装程序...", idx+1))
+		err := i.downloadFile(nodeURL, installerPath)
+		if err == nil {
+			i.addLog("Node.js 安装程序下载成功")
+			break
+		}
+		i.addLog(fmt.Sprintf("源 %d 下载失败: %v", idx+1, err))
+		lastErr = err
+		if idx < len(nodeURLs)-1 {
+			i.addLog("尝试下一个下载源...")
+		}
+	}
+	
+	if lastErr != nil {
+		return fmt.Errorf("所有下载源都失败: %v", lastErr)
 	}
 
 	i.addLog("运行 Node.js 安装程序...")
@@ -260,10 +276,15 @@ func (i *Installer) installNodeJSWindows() error {
 	// ADDLOCAL=ALL 确保安装所有组件包括 npm
 	// ALLUSERS=1 为所有用户安装
 	cmd := exec.Command("msiexec", "/i", installerPath, "/qn", "/norestart", "ADDLOCAL=ALL", "ALLUSERS=1")
-	err = cmd.Run()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
+		i.addLog(fmt.Sprintf("Node.js 安装程序执行失败: %v", err))
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+		}
 		return fmt.Errorf("安装失败: %v", err)
 	}
+	i.addLog("Node.js 安装程序执行完成")
 
 	// 清理安装文件
 	os.Remove(installerPath)
@@ -276,6 +297,12 @@ func (i *Installer) installNodeJSWindows() error {
 
 	// 等待一下让系统处理
 	time.Sleep(3 * time.Second)
+
+	// 验证安装是否成功
+	if err := i.checkNodeJS(); err == nil {
+		i.addLog("✅ Node.js 安装成功并已添加到PATH")
+		return nil
+	}
 
 	// 尝试直接使用完整路径验证安装
 	possiblePaths := []string{
@@ -449,19 +476,33 @@ func (i *Installer) installGit() error {
 }
 
 func (i *Installer) installGitWindows() error {
-	// 使用清华大学镜像源（Git for Windows）
-	// 如果清华镜像不可用，可切换到其他镜像
-	gitURL := "https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.43.0.windows.1/Git-2.43.0-64-bit.exe"
-	// 备选：直接使用 GitHub 的 CDN（通常在国内也比较快）
-	// gitURL := "https://github.com/git-for-windows/git/releases/download/v2.43.0.windows.1/Git-2.43.0-64-bit.exe"
+	// 多个下载源，提高成功率
+	gitURLs := []string{
+		"https://cdn.npmmirror.com/binaries/git-for-windows/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
+		"https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
+		"https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
+	}
 
 	tempDir := os.TempDir()
 	installerPath := filepath.Join(tempDir, "git-installer.exe")
 
-	i.addLog("下载 Git 安装程序...")
-	err := i.downloadFile(gitURL, installerPath)
-	if err != nil {
-		return fmt.Errorf("下载失败: %v", err)
+	var lastErr error
+	for idx, gitURL := range gitURLs {
+		i.addLog(fmt.Sprintf("尝试从源 %d 下载 Git 安装程序...", idx+1))
+		err := i.downloadFile(gitURL, installerPath)
+		if err == nil {
+			i.addLog("Git 安装程序下载成功")
+			break
+		}
+		i.addLog(fmt.Sprintf("源 %d 下载失败: %v", idx+1, err))
+		lastErr = err
+		if idx < len(gitURLs)-1 {
+			i.addLog("尝试下一个下载源...")
+		}
+	}
+	
+	if lastErr != nil {
+		return fmt.Errorf("所有下载源都失败: %v", lastErr)
 	}
 
 	i.addLog("运行 Git 安装程序...")
@@ -469,19 +510,30 @@ func (i *Installer) installGitWindows() error {
 	// /NORESTART 不重启
 	// /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" 安装基本组件
 	cmd := exec.Command(installerPath, "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS")
-	err = cmd.Run()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
+		i.addLog(fmt.Sprintf("Git 安装程序执行失败: %v", err))
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+		}
 		return fmt.Errorf("安装失败: %v", err)
 	}
+	i.addLog("Git 安装程序执行完成")
 
 	// 清理安装文件
 	os.Remove(installerPath)
 
 	// Windows 下需要刷新环境变量
 	i.addLog("刷新 Git 环境变量...")
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
-	// 尝试直接使用完整路径验证安装
+	// 验证安装是否成功
+	if err := i.checkGit(); err == nil {
+		i.addLog("✅ Git 安装成功并已添加到PATH")
+		return nil
+	}
+
+	// 如果PATH中没有，尝试直接使用完整路径验证安装
 	possibleGitPaths := []string{
 		`C:\Program Files\Git\bin\git.exe`,
 		`C:\Program Files (x86)\Git\bin\git.exe`,
