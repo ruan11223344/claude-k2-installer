@@ -83,9 +83,28 @@ if (-not (Test-Path "Icon.png")) {
     Write-ColorOutput "⚠️  请在项目根目录添加实际的 Icon.png 图标文件" "Yellow"
 }
 
-# 使用fyne打包Windows应用
-Write-ColorOutput "使用fyne打包Windows应用..." "Blue"
-fyne package -os windows -name $AppName
+# 获取CPU核心数
+$cores = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+if (-not $cores) { $cores = 4 }  # 默认值
+Write-ColorOutput "检测到 $cores 个CPU核心" "Blue"
+
+# 设置环境变量以使用多线程
+$env:GOMAXPROCS = $cores
+
+# 使用fyne打包Windows应用（带多线程编译）
+Write-ColorOutput "使用fyne打包Windows应用（$cores 线程并行编译）..." "Blue"
+
+# 先尝试使用 go build 进行多线程编译
+Write-ColorOutput "执行多线程编译..." "Yellow"
+go build -p $cores -ldflags="-H windowsgui -w -s" -tags bundled -o "$AppName.exe" .
+
+if ($LASTEXITCODE -eq 0) {
+    Write-ColorOutput "✓ 多线程编译成功" "Green"
+} else {
+    # 如果失败，尝试使用 fyne package
+    Write-ColorOutput "使用fyne package作为备选方案..." "Yellow"
+    fyne package -os windows -name $AppName
+}
 
 if ($LASTEXITCODE -eq 0) {
     # 检查生成的文件

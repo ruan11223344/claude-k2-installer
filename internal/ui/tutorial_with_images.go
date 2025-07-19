@@ -179,6 +179,21 @@ func NewTutorialWithImages(parent fyne.Window) *TutorialWithImages {
 				ImageData: assets.APIKeyCreatedImage,
 			},
 			{
+				Title: "步骤4：首次运行 Claude Code",
+				Content: `打开 Claude Code 后，会检测到你的自定义 API Key：
+
+1. 系统会显示检测到的 API Key（如图所示）
+2. 询问是否使用此 API Key
+3. 这里要按↑键盘，选择 "1. Yes"
+4. 然后按回车键继续
+
+⚠️ 重要提醒：
+• 一定要选择 "Yes" 使用检测到的 K2 API
+• 系统已经为你配置好了 Kimi K2 的 API
+• 如果选择 No，将无法使用配置好的 K2 服务`,
+				ImageData: assets.ClaudeFirstRunImage,
+			},
+			{
 				Title: "安装完成后的使用",
 				Content: `安装完成后，你可以：
 

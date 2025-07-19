@@ -282,39 +282,50 @@ func (m *Manager) onInstallClick() {
 	go func() {
 		for update := range m.installer.Progress {
 			if update.Error != nil {
-				m.statusLabel.SetText(fmt.Sprintf("错误: %v", update.Error))
-				m.installButton.Enable()
-				dialog.ShowError(update.Error, m.window)
+				// 在主线程中更新 UI
+				m.updateUI(func() {
+					m.statusLabel.SetText(fmt.Sprintf("错误: %v", update.Error))
+					m.installButton.Enable()
+					dialog.ShowError(update.Error, m.window)
+				})
 				return
 			}
 
-			// 更新进度
-			m.progressBar.SetValue(update.Percent)
-			m.statusLabel.SetText(update.Message)
+			// 更新进度 - 在主线程中执行
+			m.updateUI(func() {
+				m.progressBar.SetValue(update.Percent)
+				m.statusLabel.SetText(update.Message)
 
-			// 更新日志
-			logs := m.installer.GetLogs()
-			logText := strings.Join(logs, "\n")
-			m.logsDisplay.SetText(logText)
+				// 更新日志
+				logs := m.installer.GetLogs()
+				logText := strings.Join(logs, "\n")
+				m.logsDisplay.SetText(logText)
 
-			// 滚动到底部
-			m.logsDisplay.CursorRow = len(logs)
+				// 滚动到底部
+				m.logsDisplay.CursorRow = len(logs)
+			})
 		}
 
 		// 配置 API Key 和速率限制
-		m.statusLabel.SetText("配置 K2 API...")
+		m.updateUI(func() {
+			m.statusLabel.SetText("配置 K2 API...")
+		})
 
 		// 传递系统级配置选项
 		useSystemConfig := m.systemConfigCheck != nil && m.systemConfigCheck.Checked
 		err := m.installer.ConfigureK2APIWithOptions(apiKey, rpm, useSystemConfig)
 		if err != nil {
-			dialog.ShowError(err, m.window)
-			m.installButton.Enable()
+			m.updateUI(func() {
+				dialog.ShowError(err, m.window)
+				m.installButton.Enable()
+			})
 			return
 		}
 
-		// 完成安装
-		m.handleInstallComplete()
+		// 完成安装 - 在主线程中执行
+		m.updateUI(func() {
+			m.handleInstallComplete()
+		})
 	}()
 }
 
@@ -338,8 +349,18 @@ func (m *Manager) showTutorial() {
 }
 
 func (m *Manager) updateUI(fn func()) {
-	m.window.Canvas().Refresh(m.window.Content())
-	if fn != nil {
+	if fn == nil {
+		return
+	}
+	
+	// 使用 Fyne 的线程安全机制
+	// 确保 UI 操作在主线程中执行
+	if fyne.CurrentApp().Driver().CanvasForObject(m.window.Content()) != nil {
+		// 如果已经在主线程，直接执行
+		fn()
+	} else {
+		// 否则，安排在主线程执行
+		m.window.Canvas().Refresh(m.window.Content())
 		fn()
 	}
 }

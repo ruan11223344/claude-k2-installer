@@ -12,3 +12,6 @@ var CreateAPIKeyImage []byte
 
 //go:embed images/api-key-created.png
 var APIKeyCreatedImage []byte
+
+//go:embed images/select-key.png
+var ClaudeFirstRunImage []byte
