@@ -33,7 +33,9 @@ func New() *Installer {
 	}
 }
 
+// Install 开始安装过程
 func (i *Installer) Install() {
+	// 安装完成后关闭 channel
 	defer close(i.Progress)
 
 	steps := []struct {
@@ -47,7 +49,6 @@ func (i *Installer) Install() {
 		{"检测 Git", i.checkGit, 10},
 		{"安装 Git", i.installGit, 20},
 		{"安装 Claude Code", i.installClaudeCode, 20},
-		{"配置 K2 API", func() error { return nil }, 10}, // K2 API 配置将在后续步骤中进行
 		{"验证安装", i.verifyInstallation, 5},
 	}
 
@@ -86,33 +87,120 @@ func (i *Installer) checkSystem() error {
 	return nil
 }
 
-func (i *Installer) checkNodeJS() error {
-	cmd := exec.Command("node", "--version")
+// getHomebrewPrefix 获取 Homebrew 的安装前缀
+func getHomebrewPrefix() string {
+	// 尝试运行 brew --prefix
+	cmd := exec.Command("brew", "--prefix")
 	output, err := cmd.Output()
-
 	if err == nil {
-		version := strings.TrimSpace(string(output))
-		i.addLog(fmt.Sprintf("检测到 Node.js: %s", version))
+		return strings.TrimSpace(string(output))
+	}
+	
+	// 如果 brew 命令失败，检查常见位置
+	if runtime.GOARCH == "arm64" {
+		// Apple Silicon
+		if _, err := os.Stat("/opt/homebrew"); err == nil {
+			return "/opt/homebrew"
+		}
+	} else {
+		// Intel Mac
+		if _, err := os.Stat("/usr/local"); err == nil {
+			return "/usr/local"
+		}
+	}
+	
+	return ""
+}
 
-		// 检查版本是否满足要求 - 提取主版本号
-		// 版本格式通常是 v16.14.0 或 v20.10.0
-		if strings.HasPrefix(version, "v") {
-			// 提取主版本号
-			parts := strings.Split(version[1:], ".")
-			if len(parts) >= 1 {
-				majorVersion, err := strconv.Atoi(parts[0])
-				if err == nil && majorVersion >= 16 {
-					i.addLog(fmt.Sprintf("Node.js 版本满足要求 (v%d >= v16)", majorVersion))
-					return nil
+func (i *Installer) checkNodeJS() error {
+	// 首先尝试使用 which/where 命令查找 node
+	var lookupCmd string
+	var lookupArgs []string
+	
+	if runtime.GOOS == "windows" {
+		lookupCmd = "where"
+		lookupArgs = []string{"node"}
+	} else {
+		lookupCmd = "which"
+		lookupArgs = []string{"node"}
+	}
+	
+	// 使用 which/where 查找 node
+	cmd := exec.Command(lookupCmd, lookupArgs...)
+	lookupOutput, lookupErr := cmd.Output()
+	
+	if lookupErr == nil {
+		// 找到了 node 命令的路径
+		nodePath := strings.TrimSpace(string(lookupOutput))
+		if nodePath != "" {
+			// Windows 的 where 命令可能返回多行，取第一行
+			lines := strings.Split(nodePath, "\n")
+			if len(lines) > 0 {
+				nodePath = strings.TrimSpace(lines[0])
+			}
+			i.addLog(fmt.Sprintf("通过 %s 找到 Node.js: %s", lookupCmd, nodePath))
+		}
+	}
+	
+	// 尝试直接执行 node 命令
+	cmd = exec.Command("node", "--version")
+	output, err := cmd.CombinedOutput()
+	
+	if err != nil {
+		// 如果失败，显示更详细的错误信息
+		i.addLog(fmt.Sprintf("执行 'node --version' 失败: %v", err))
+		if len(output) > 0 {
+			i.addLog(fmt.Sprintf("错误输出: %s", string(output)))
+		}
+		
+		// 检查 PATH 环境变量
+		pathEnv := os.Getenv("PATH")
+		i.addLog(fmt.Sprintf("当前 PATH: %s", pathEnv))
+		
+		// macOS 特殊处理：检查常见的安装位置
+		if runtime.GOOS == "darwin" {
+			i.addLog("正在检查 macOS 常见的 Node.js 安装位置...")
+			commonPaths := []string{
+				"/opt/homebrew/bin/node",     // Apple Silicon Homebrew
+				"/usr/local/bin/node",         // Intel Homebrew
+				"/usr/bin/node",               // 系统默认
+			}
+			
+			for _, path := range commonPaths {
+				if _, err := os.Stat(path); err == nil {
+					i.addLog(fmt.Sprintf("发现 Node.js 在: %s", path))
+					// 尝试运行找到的 node
+					testCmd := exec.Command(path, "--version")
+					if testOutput, testErr := testCmd.Output(); testErr == nil {
+						i.addLog(fmt.Sprintf("版本: %s", string(testOutput)))
+						i.addLog("提示：请将该路径添加到 PATH 环境变量中")
+					}
 				}
 			}
 		}
+		
+		i.addLog("未检测到 Node.js，需要安装")
+		return fmt.Errorf("未安装 Node.js")
+	}
+	
+	version := strings.TrimSpace(string(output))
+	i.addLog(fmt.Sprintf("检测到 Node.js: %s", version))
 
-		return fmt.Errorf("Node.js 版本过低，需要 v16 或更高版本")
+	// 检查版本是否满足要求 - 提取主版本号
+	// 版本格式通常是 v16.14.0 或 v20.10.0
+	if strings.HasPrefix(version, "v") {
+		// 提取主版本号
+		parts := strings.Split(version[1:], ".")
+		if len(parts) >= 1 {
+			majorVersion, err := strconv.Atoi(parts[0])
+			if err == nil && majorVersion >= 16 {
+				i.addLog(fmt.Sprintf("Node.js 版本满足要求 (v%d >= v16)", majorVersion))
+				return nil
+			}
+		}
 	}
 
-	i.addLog("未检测到 Node.js，需要安装")
-	return fmt.Errorf("未安装 Node.js")
+	return fmt.Errorf("Node.js 版本过低，需要 v16 或更高版本")
 }
 
 func (i *Installer) installNodeJS() error {
@@ -418,137 +506,179 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 	rpmInt, _ := strconv.Atoi(rpm)
 	requestDelay := 60000 / rpmInt // 60秒转毫秒除以RPM
 
-	// 配置内容
-	configContent := fmt.Sprintf(`{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
-    "ANTHROPIC_API_KEY": "%s",
-    "CLAUDE_REQUEST_DELAY_MS": "%d",
-    "CLAUDE_MAX_CONCURRENT_REQUESTS": "1"
-  }
-}`, apiKey, requestDelay)
-
-	// 尝试写入系统级配置（需要管理员权限）
-	systemConfigWritten := false
-	if useSystemConfig {
-		i.addLog("尝试写入系统级配置...")
-		if runtime.GOOS == "windows" {
-			systemPath := `C:\ProgramData\ClaudeCode\managed-settings.json`
-			systemDir := `C:\ProgramData\ClaudeCode`
-
-			// 尝试创建目录和写入文件
-			if err := os.MkdirAll(systemDir, 0755); err == nil {
-				if err := os.WriteFile(systemPath, []byte(configContent), 0644); err == nil {
-					i.addLog("✅ 已写入系统级配置（最高优先级）")
-					systemConfigWritten = true
-				}
-			}
-		} else if runtime.GOOS == "darwin" {
-			systemPath := "/Library/Application Support/ClaudeCode/managed-settings.json"
-			systemDir := "/Library/Application Support/ClaudeCode"
-
-			// macOS 需要 sudo 权限
-			if err := os.MkdirAll(systemDir, 0755); err == nil {
-				if err := os.WriteFile(systemPath, []byte(configContent), 0644); err == nil {
-					i.addLog("✅ 已写入系统级配置（最高优先级）")
-					systemConfigWritten = true
-				}
-			}
-		} else { // Linux
-			systemPath := "/etc/claude-code/managed-settings.json"
-			systemDir := "/etc/claude-code"
-
-			// Linux 需要 sudo 权限
-			if err := os.MkdirAll(systemDir, 0755); err == nil {
-				if err := os.WriteFile(systemPath, []byte(configContent), 0644); err == nil {
-					i.addLog("✅ 已写入系统级配置（最高优先级）")
-					systemConfigWritten = true
-				}
-			}
-		}
-
-		if !systemConfigWritten {
-			i.addLog("⚠️ 无法写入系统级配置（需要管理员权限），将使用用户级配置")
-		}
-	}
+	// 配置内容 - 只使用 API KEY，避免认证冲突
+	// useSystemConfig 参数现在用于决定是否设置永久环境变量
+	// true: 设置永久环境变量（写入配置文件/注册表）
+	// false: 仅显示临时设置命令
 
 	// 根据操作系统设置配置
 	if runtime.GOOS == "windows" {
-		// Windows: 使用 Claude Code 标准配置目录
-		claudeDir := filepath.Join(home, ".claude")
-		os.MkdirAll(claudeDir, 0755)
-
-		configPath := filepath.Join(claudeDir, "settings.json")
-		config := fmt.Sprintf(`{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
-    "ANTHROPIC_API_KEY": "%s",
-    "CLAUDE_REQUEST_DELAY_MS": "%d",
-    "CLAUDE_MAX_CONCURRENT_REQUESTS": "1"
-  }
-}`, apiKey, requestDelay)
-
-		err = os.WriteFile(configPath, []byte(config), 0644)
-		if err != nil {
-			return fmt.Errorf("写入配置文件失败: %v", err)
-		}
-
-		i.addLog(fmt.Sprintf("已配置 Claude Code settings.json，请求延迟: %d毫秒", requestDelay))
-	} else {
-		// Mac/Linux: 使用 Claude Code 标准配置目录 + 环境变量
-		claudeDir := filepath.Join(home, ".claude")
-		os.MkdirAll(claudeDir, 0755)
-
-		// 1. 创建 settings.json 配置文件
-		configPath := filepath.Join(claudeDir, "settings.json")
-		config := fmt.Sprintf(`{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
-    "ANTHROPIC_API_KEY": "%s",
-    "CLAUDE_REQUEST_DELAY_MS": "%d",
-    "CLAUDE_MAX_CONCURRENT_REQUESTS": "1"
-  }
-}`, apiKey, requestDelay)
-
-		err = os.WriteFile(configPath, []byte(config), 0644)
-		if err != nil {
-			return fmt.Errorf("写入配置文件失败: %v", err)
-		}
-
-		// 2. 同时设置环境变量作为备用
-		shellConfig := ""
-		shell := os.Getenv("SHELL")
-
-		if strings.Contains(shell, "zsh") {
-			shellConfig = filepath.Join(home, ".zshrc")
-		} else if strings.Contains(shell, "bash") {
-			shellConfig = filepath.Join(home, ".bashrc")
+		if useSystemConfig {
+			// Windows: 设置永久环境变量
+			i.addLog("设置 Windows 永久环境变量...")
+			envVars := map[string]string{
+				"ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
+				"ANTHROPIC_API_KEY": apiKey,
+				"CLAUDE_REQUEST_DELAY_MS": fmt.Sprintf("%d", requestDelay),
+				"CLAUDE_MAX_CONCURRENT_REQUESTS": "1",
+			}
+			
+			for envVar, value := range envVars {
+				// 设置用户级环境变量（使用 setx）
+				cmd := exec.Command("setx", envVar, value)
+				err := cmd.Run()
+				if err != nil {
+					i.addLog(fmt.Sprintf("⚠️ 设置环境变量 %s 失败: %v", envVar, err))
+				} else {
+					i.addLog(fmt.Sprintf("✅ 已设置用户环境变量: %s", envVar))
+				}
+			}
+			
+			i.addLog(fmt.Sprintf("永久环境变量已设置（请求延迟: %d毫秒），可能需要重启终端才能生效", requestDelay))
 		} else {
-			shellConfig = filepath.Join(home, ".profile")
-		}
+			// 创建临时批处理脚本设置环境变量
+			i.addLog("正在创建临时环境变量脚本...")
+			
+			// 获取临时目录
+			tempDir := os.TempDir()
+			scriptPath := filepath.Join(tempDir, "claude_k2_setup.bat")
+			scriptContent := fmt.Sprintf(`@echo off
+REM Claude Code K2 临时环境变量设置脚本
+set ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic/
+set ANTHROPIC_API_KEY=%s
+set CLAUDE_REQUEST_DELAY_MS=%d
+set CLAUDE_MAX_CONCURRENT_REQUESTS=1
+set ANTHROPIC_AUTH_TOKEN=
 
-		envConfig := fmt.Sprintf(`
+echo ✅ K2环境变量已设置：
+echo   - API Key: %s...
+echo   - Base URL: https://api.moonshot.cn/anthropic/
+echo   - 请求延迟: %d毫秒
+echo.
+echo 现在可以运行 'claude' 命令使用K2 API
+`, apiKey, requestDelay, apiKey[:10], requestDelay)
+
+			err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+			if err != nil {
+				i.addLog(fmt.Sprintf("⚠️ 创建临时脚本失败: %v", err))
+			} else {
+				i.addLog(fmt.Sprintf("✅ 临时环境变量脚本已创建: %s", scriptPath))
+				i.addLog("  打开Claude Code时将自动运行此脚本设置环境变量")
+			}
+		}
+	} else {
+		// Mac/Linux: 只设置环境变量，不写入 settings.json
+		if useSystemConfig {
+			// 设置永久环境变量
+			shell := os.Getenv("SHELL")
+			shellConfigs := []string{}
+			
+			// 根据 shell 类型确定配置文件
+			if strings.Contains(shell, "zsh") {
+				shellConfigs = append(shellConfigs, filepath.Join(home, ".zshrc"))
+			} else if strings.Contains(shell, "bash") {
+				// bash 在 macOS 上通常使用 .bash_profile，在 Linux 上使用 .bashrc
+				if runtime.GOOS == "darwin" {
+					shellConfigs = append(shellConfigs, filepath.Join(home, ".bash_profile"))
+				} else {
+					shellConfigs = append(shellConfigs, filepath.Join(home, ".bashrc"))
+				}
+			} else if strings.Contains(shell, "fish") {
+				shellConfigs = append(shellConfigs, filepath.Join(home, ".config/fish/config.fish"))
+			} else {
+				// 默认使用 .profile
+				shellConfigs = append(shellConfigs, filepath.Join(home, ".profile"))
+			}
+			
+			// 对每个配置文件进行处理
+			for _, shellConfig := range shellConfigs {
+				envConfig := fmt.Sprintf(`
 # Claude Code K2 Configuration
 export ANTHROPIC_BASE_URL="https://api.moonshot.cn/anthropic/"
 export ANTHROPIC_API_KEY="%s"
 export CLAUDE_REQUEST_DELAY_MS="%d"
 export CLAUDE_MAX_CONCURRENT_REQUESTS="1"
+unset ANTHROPIC_AUTH_TOKEN
 `, apiKey, requestDelay)
 
-		// 追加到配置文件
-		f, err := os.OpenFile(shellConfig, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-		if err != nil {
-			return fmt.Errorf("打开配置文件失败: %v", err)
-		}
-		defer f.Close()
+				// 检查文件是否存在
+				if _, err := os.Stat(shellConfig); os.IsNotExist(err) {
+					// 文件不存在，跳过
+					continue
+				}
+				
+				// 检查配置是否已存在
+				existingData, err := os.ReadFile(shellConfig)
+				if err != nil {
+					i.addLog(fmt.Sprintf("⚠️ 读取 %s 失败: %v", shellConfig, err))
+					continue
+				}
+				
+				if strings.Contains(string(existingData), "# Claude Code K2 Configuration") {
+					i.addLog(fmt.Sprintf("⚠️ %s 中已存在配置，跳过", shellConfig))
+					continue
+				}
 
-		_, err = f.WriteString(envConfig)
-		if err != nil {
-			return fmt.Errorf("写入配置失败: %v", err)
-		}
+				// 追加到配置文件
+				f, err := os.OpenFile(shellConfig, os.O_APPEND|os.O_WRONLY, 0644)
+				if err != nil {
+					i.addLog(fmt.Sprintf("⚠️ 无法打开 %s: %v", shellConfig, err))
+					continue
+				}
+				
+				_, err = f.WriteString(envConfig)
+				f.Close()
+				
+				if err != nil {
+					i.addLog(fmt.Sprintf("⚠️ 写入 %s 失败: %v", shellConfig, err))
+				} else {
+					i.addLog(fmt.Sprintf("✅ 永久环境变量已添加到 %s", shellConfig))
+				}
+			}
+			
+			i.addLog(fmt.Sprintf("永久环境变量已设置（请求延迟: %d毫秒），请重新打开终端或运行 source 命令生效", requestDelay))
+		} else {
+			// 创建临时脚本设置环境变量
+			i.addLog("正在创建临时环境变量脚本...")
+			
+			// 创建临时脚本文件
+			scriptPath := "/tmp/claude_k2_setup.sh"
+			scriptContent := fmt.Sprintf(`#!/bin/bash
+# Claude Code K2 临时环境变量设置脚本
+export ANTHROPIC_BASE_URL="https://api.moonshot.cn/anthropic/"
+export ANTHROPIC_API_KEY="%s"
+export CLAUDE_REQUEST_DELAY_MS="%d"
+export CLAUDE_MAX_CONCURRENT_REQUESTS="1"
+unset ANTHROPIC_AUTH_TOKEN
 
-		i.addLog(fmt.Sprintf("已配置 Claude Code settings.json 和环境变量，请求延迟: %d毫秒", requestDelay))
-		i.addLog(fmt.Sprintf("环境变量已添加到 %s", shellConfig))
+echo "✅ K2环境变量已设置："
+echo "  - API Key: %s..."
+echo "  - Base URL: https://api.moonshot.cn/anthropic/"
+echo "  - 请求延迟: %d毫秒"
+echo ""
+echo "现在可以运行 'claude' 命令使用K2 API"
+`, apiKey, requestDelay, apiKey[:10], requestDelay)
+
+			err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+			if err != nil {
+				i.addLog(fmt.Sprintf("⚠️ 创建临时脚本失败: %v", err))
+			} else {
+				i.addLog(fmt.Sprintf("✅ 临时环境变量脚本已创建: %s", scriptPath))
+				i.addLog("  打开Claude Code时将自动运行此脚本设置环境变量")
+			}
+		}
+	}
+
+	// 创建 .claude.json 文件以跳过登录
+	claudeJsonPath := filepath.Join(home, ".claude.json")
+	claudeJson := `{
+  "hasCompletedOnboarding": true
+}`
+	err = os.WriteFile(claudeJsonPath, []byte(claudeJson), 0644)
+	if err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 创建 .claude.json 失败: %v", err))
+	} else {
+		i.addLog("✅ 已创建 .claude.json 以跳过登录流程")
 	}
 
 	i.addLog("K2 API 配置完成")
@@ -642,8 +772,19 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 	}
 
 	i.addLog("开始恢复 Claude Code 原始配置...")
-
-	// 1. 删除用户级配置
+	
+	// 删除 .claude.json 文件
+	claudeJsonPath := filepath.Join(home, ".claude.json")
+	if _, err := os.Stat(claudeJsonPath); err == nil {
+		err = os.Remove(claudeJsonPath)
+		if err != nil {
+			i.addLog(fmt.Sprintf("⚠️ 删除 .claude.json 失败: %v", err))
+		} else {
+			i.addLog("✅ 已删除 .claude.json")
+		}
+	}
+	
+	// 删除 ~/.claude/settings.json 文件
 	claudeDir := filepath.Join(home, ".claude")
 	settingsPath := filepath.Join(claudeDir, "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
@@ -651,105 +792,114 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 		if err != nil {
 			i.addLog(fmt.Sprintf("⚠️ 删除 settings.json 失败: %v", err))
 		} else {
-			i.addLog("✅ 已删除用户级配置 settings.json")
+			i.addLog("✅ 已删除 ~/.claude/settings.json")
 		}
 	}
 
-	// 2. 删除旧的 .claude.json (Windows兼容)
-	oldConfigPath := filepath.Join(home, ".claude.json")
-	if _, err := os.Stat(oldConfigPath); err == nil {
-		err = os.Remove(oldConfigPath)
-		if err != nil {
-			i.addLog(fmt.Sprintf("⚠️ 删除 .claude.json 失败: %v", err))
-		} else {
-			i.addLog("✅ 已删除旧配置 .claude.json")
-		}
-	}
-
-	// 3. 尝试删除系统级配置（需要管理员权限）
+	// 清理环境变量配置
 	if runtime.GOOS == "windows" {
-		systemPath := `C:\ProgramData\ClaudeCode\managed-settings.json`
-		if _, err := os.Stat(systemPath); err == nil {
-			err = os.Remove(systemPath)
-			if err != nil {
-				i.addLog("⚠️ 无法删除系统级配置（需要管理员权限）")
-			} else {
-				i.addLog("✅ 已删除系统级配置")
+		// Windows: 清除永久环境变量
+		i.addLog("清除 Windows 环境变量...")
+		envVars := []string{
+			"ANTHROPIC_BASE_URL",
+			"ANTHROPIC_API_KEY", 
+			"ANTHROPIC_AUTH_TOKEN",
+			"CLAUDE_REQUEST_DELAY_MS",
+			"CLAUDE_MAX_CONCURRENT_REQUESTS",
+		}
+		
+		for _, envVar := range envVars {
+			// 清除用户级环境变量
+			cmd := exec.Command("reg", "delete", "HKCU\\Environment", "/v", envVar, "/f")
+			err := cmd.Run()
+			if err == nil {
+				i.addLog(fmt.Sprintf("✅ 已清除用户环境变量: %s", envVar))
+			}
+			
+			// 尝试清除系统级环境变量（需要管理员权限）
+			cmd = exec.Command("reg", "delete", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", "/v", envVar, "/f")
+			err = cmd.Run()
+			if err == nil {
+				i.addLog(fmt.Sprintf("✅ 已清除系统环境变量: %s", envVar))
 			}
 		}
-	} else if runtime.GOOS == "darwin" {
-		systemPath := "/Library/Application Support/ClaudeCode/managed-settings.json"
-		if _, err := os.Stat(systemPath); err == nil {
-			err = os.Remove(systemPath)
-			if err != nil {
-				i.addLog("⚠️ 无法删除系统级配置（需要管理员权限）")
-			} else {
-				i.addLog("✅ 已删除系统级配置")
-			}
-		}
-	} else { // Linux
-		systemPath := "/etc/claude-code/managed-settings.json"
-		if _, err := os.Stat(systemPath); err == nil {
-			err = os.Remove(systemPath)
-			if err != nil {
-				i.addLog("⚠️ 无法删除系统级配置（需要管理员权限）")
-			} else {
-				i.addLog("✅ 已删除系统级配置")
-			}
-		}
-	}
-
-	// 4. 清理环境变量（Mac/Linux）
-	if runtime.GOOS != "windows" {
+		
+		// 广播环境变量更改消息
+		i.addLog("刷新 Windows 环境变量...")
+		cmd := exec.Command("setx", "CLAUDE_REFRESH", "1")
+		cmd.Run()
+		// 删除临时变量
+		cmd = exec.Command("reg", "delete", "HKCU\\Environment", "/v", "CLAUDE_REFRESH", "/f")
+		cmd.Run()
+		
+	} else {
+		// Mac/Linux: 清除永久环境变量
 		// Mac/Linux: 删除环境变量配置
-		shellConfig := ""
 		shell := os.Getenv("SHELL")
-
+		shellConfigs := []string{}
+		
+		// 根据 shell 类型确定配置文件
 		if strings.Contains(shell, "zsh") {
-			shellConfig = filepath.Join(home, ".zshrc")
+			shellConfigs = append(shellConfigs, filepath.Join(home, ".zshrc"))
 		} else if strings.Contains(shell, "bash") {
-			shellConfig = filepath.Join(home, ".bashrc")
-		} else {
-			shellConfig = filepath.Join(home, ".profile")
+			// bash 可能使用多个配置文件
+			shellConfigs = append(shellConfigs, 
+				filepath.Join(home, ".bashrc"),
+				filepath.Join(home, ".bash_profile"),
+			)
+		} else if strings.Contains(shell, "fish") {
+			shellConfigs = append(shellConfigs, filepath.Join(home, ".config/fish/config.fish"))
 		}
+		
+		// 总是检查 .profile 作为后备
+		shellConfigs = append(shellConfigs, filepath.Join(home, ".profile"))
+		
+		// 清理所有找到的配置文件
+		for _, shellConfig := range shellConfigs {
+			if _, err := os.Stat(shellConfig); err != nil {
+				continue // 文件不存在，跳过
+			}
 
-		// 读取文件内容
-		if data, err := os.ReadFile(shellConfig); err == nil {
-			content := string(data)
+			// 读取文件内容
+			if data, err := os.ReadFile(shellConfig); err == nil {
+				content := string(data)
 
-			// 移除 Claude Code K2 Configuration 部分
-			lines := strings.Split(content, "\n")
-			var newLines []string
-			skipSection := false
+				// 移除 Claude Code K2 Configuration 部分
+				lines := strings.Split(content, "\n")
+				var newLines []string
+				skipSection := false
 
-			for _, line := range lines {
-				if strings.Contains(line, "# Claude Code K2 Configuration") {
-					skipSection = true
-					continue
-				}
-
-				if skipSection {
-					// 跳过以 export ANTHROPIC_ 或 export CLAUDE_ 开头的行
-					if strings.HasPrefix(strings.TrimSpace(line), "export ANTHROPIC_") ||
-						strings.HasPrefix(strings.TrimSpace(line), "export CLAUDE_") {
+				for _, line := range lines {
+					if strings.Contains(line, "# Claude Code K2 Configuration") {
+						skipSection = true
 						continue
 					}
-					// 如果遇到空行或其他注释，结束跳过
-					if strings.TrimSpace(line) == "" || (!strings.HasPrefix(strings.TrimSpace(line), "export") && strings.HasPrefix(strings.TrimSpace(line), "#")) {
-						skipSection = false
+
+					if skipSection {
+						// 跳过以 export ANTHROPIC_ 或 export CLAUDE_ 开头的行
+						if strings.HasPrefix(strings.TrimSpace(line), "export ANTHROPIC_") ||
+							strings.HasPrefix(strings.TrimSpace(line), "export CLAUDE_") {
+							continue
+						}
+						// 如果遇到空行或其他注释，结束跳过
+						if strings.TrimSpace(line) == "" || (!strings.HasPrefix(strings.TrimSpace(line), "export") && strings.HasPrefix(strings.TrimSpace(line), "#")) {
+							skipSection = false
+						}
+					}
+
+					if !skipSection {
+						newLines = append(newLines, line)
 					}
 				}
 
-				if !skipSection {
-					newLines = append(newLines, line)
+				// 写回文件
+				newContent := strings.Join(newLines, "\n")
+				err = os.WriteFile(shellConfig, []byte(newContent), 0644)
+				if err != nil {
+					i.addLog(fmt.Sprintf("⚠️ 恢复 %s 失败: %v", shellConfig, err))
+				} else {
+					i.addLog(fmt.Sprintf("✅ 已清理 %s 中的配置", shellConfig))
 				}
-			}
-
-			// 写回文件
-			newContent := strings.Join(newLines, "\n")
-			err = os.WriteFile(shellConfig, []byte(newContent), 0644)
-			if err != nil {
-				return fmt.Errorf("恢复配置文件失败: %v", err)
 			}
 		}
 	}

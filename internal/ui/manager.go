@@ -4,10 +4,13 @@ import (
 	"claude-k2-installer/internal/installer"
 	"fmt"
 	"image/color"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -22,14 +25,14 @@ type Manager struct {
 	installer *installer.Installer
 
 	// UI 组件
-	progressBar    *widget.ProgressBar
-	statusLabel    *widget.Label
-	logsDisplay    *widget.Entry
-	installButton  *widget.Button
-	apiKeyEntry    *widget.Entry
-	rpmEntry       *widget.Entry
-	tutorialButton *widget.Button
-	openButton     *widget.Button
+	progressBar       *widget.ProgressBar
+	statusLabel       *widget.Label
+	logsDisplay       *widget.Entry
+	installButton     *widget.Button
+	apiKeyEntry       *widget.Entry
+	rpmEntry          *widget.Entry
+	tutorialButton    *widget.Button
+	openButton        *widget.Button
 	systemConfigCheck *widget.Check
 }
 
@@ -136,7 +139,7 @@ func (m *Manager) createInstallerContent() fyne.CanvasObject {
 	// 速率限制输入
 	m.rpmEntry = widget.NewEntry()
 	m.rpmEntry.SetPlaceHolder("3")
-	m.rpmEntry.SetText("3") // 默认值（免费用户）
+	m.rpmEntry.SetText("3")                  // 默认值（免费用户）
 	m.rpmEntry.Resize(fyne.NewSize(100, 36)) // 固定尺寸，比较小
 
 	// 速率限制说明
@@ -164,10 +167,15 @@ func (m *Manager) createInstallerContent() fyne.CanvasObject {
 		rpmInfo,
 		rpmDesc,
 	)
-	
-	// 系统级配置勾选框
-	m.systemConfigCheck = widget.NewCheck("写入系统级配置（需要管理员权限，更持久）", nil)
-	m.systemConfigCheck.SetChecked(false) // 默认不勾选
+
+	// 自动设置勾选框
+	m.systemConfigCheck = widget.NewCheck("永久设置K2环境变量（推荐 - 写入.bashrc/.zshrc/Windows环境变量）", nil)
+	m.systemConfigCheck.SetChecked(true) // 默认勾选，永久设置
+
+	// 添加说明文字
+	envVarHelp := widget.NewLabel("✓ 勾选：永久设置（写入配置文件）  ✗ 不勾选：仅当前进程")
+	envVarHelp.TextStyle = fyne.TextStyle{Italic: true}
+	envVarHelp.Alignment = fyne.TextAlignLeading
 
 	// 创建按钮
 	m.installButton = widget.NewButton("开始安装", m.onInstallClick)
@@ -202,10 +210,11 @@ func (m *Manager) createInstallerContent() fyne.CanvasObject {
 			rpmContainer,
 			widget.NewSeparator(),
 			m.systemConfigCheck,
+			envVarHelp,
 		),
 		buttonContainer,
 	)
-	
+
 	// 加载已保存的配置
 	m.loadSavedConfig()
 
@@ -280,67 +289,134 @@ func (m *Manager) onInstallClick() {
 
 	// 启动进度监控协程
 	go func() {
+		// 添加 panic 恢复机制
+		defer func() {
+			if r := recover(); r != nil {
+				errMsg := fmt.Sprintf("安装过程中发生错误: %v", r)
+				fmt.Println(errMsg)
+				if m.statusLabel != nil {
+					m.statusLabel.SetText("安装失败")
+				}
+				if m.installButton != nil {
+					m.installButton.Enable()
+				}
+				// 延迟显示错误对话框
+				time.AfterFunc(100*time.Millisecond, func() {
+					if m.window != nil {
+						dialog.ShowError(fmt.Errorf(errMsg), m.window)
+					}
+				})
+			}
+		}()
+
+		// Install() 方法会关闭 channel，这里不需要再关闭
+
+		// 监控安装进度
 		for update := range m.installer.Progress {
 			if update.Error != nil {
-				// 在主线程中更新 UI
-				m.updateUI(func() {
+				// 更新 UI
+				if m.statusLabel != nil {
 					m.statusLabel.SetText(fmt.Sprintf("错误: %v", update.Error))
+				}
+				if m.installButton != nil {
 					m.installButton.Enable()
-					dialog.ShowError(update.Error, m.window)
+				}
+				// 延迟显示错误对话框
+				time.AfterFunc(100*time.Millisecond, func() {
+					if m.window != nil {
+						dialog.ShowError(update.Error, m.window)
+					}
 				})
 				return
 			}
 
-			// 更新进度 - 在主线程中执行
-			m.updateUI(func() {
+			// 更新进度
+			if m.progressBar != nil {
 				m.progressBar.SetValue(update.Percent)
+			}
+			if m.statusLabel != nil {
 				m.statusLabel.SetText(update.Message)
+			}
 
-				// 更新日志
+			// 更新日志
+			if m.logsDisplay != nil {
 				logs := m.installer.GetLogs()
 				logText := strings.Join(logs, "\n")
 				m.logsDisplay.SetText(logText)
-
 				// 滚动到底部
 				m.logsDisplay.CursorRow = len(logs)
-			})
+			}
 		}
 
-		// 配置 API Key 和速率限制
-		m.updateUI(func() {
-			m.statusLabel.SetText("配置 K2 API...")
-		})
+		// channel 已关闭，现在配置 API
+		// 先显示完成状态
+		m.handleInstallComplete()
 
-		// 传递系统级配置选项
-		useSystemConfig := m.systemConfigCheck != nil && m.systemConfigCheck.Checked
-		err := m.installer.ConfigureK2APIWithOptions(apiKey, rpm, useSystemConfig)
-		if err != nil {
-			m.updateUI(func() {
-				dialog.ShowError(err, m.window)
-				m.installButton.Enable()
+		// 然后配置 API
+		go func() {
+			// 配置 API Key 和速率限制
+			if m.statusLabel != nil {
+				m.statusLabel.SetText("配置 K2 API...")
+			}
+
+			// 更新日志显示
+			if m.logsDisplay != nil {
+				m.logsDisplay.SetText(m.logsDisplay.Text + "\n配置 K2 API...")
+			}
+
+			// 传递系统级配置选项
+			useSystemConfig := m.systemConfigCheck != nil && m.systemConfigCheck.Checked
+			err := m.installer.ConfigureK2APIWithOptions(apiKey, rpm, useSystemConfig)
+			if err != nil {
+				// 不影响主流程，只是配置失败
+				fyne.Do(func() {
+					if m.statusLabel != nil {
+						m.statusLabel.SetText("⚠️ 安装完成，但 API 配置失败")
+					}
+				})
+				return
+			}
+
+			// 显示最终日志
+			fyne.Do(func() {
+				if m.logsDisplay != nil {
+					logs := m.installer.GetLogs()
+					logText := strings.Join(logs, "\n")
+					m.logsDisplay.SetText(logText)
+				}
+				if m.statusLabel != nil {
+					m.statusLabel.SetText("✅ 安装和配置全部完成！")
+				}
 			})
-			return
-		}
-
-		// 完成安装 - 在主线程中执行
-		m.updateUI(func() {
-			m.handleInstallComplete()
-		})
+		}()
 	}()
 }
 
 // handleInstallComplete 处理安装完成
 func (m *Manager) handleInstallComplete() {
-	m.installButton.Hide()
-	m.openButton.Show()
-	m.statusLabel.SetText("✅ 安装完成！")
+	// 确保 UI 更新在主线程中执行
+	fyne.Do(func() {
+		if m.installButton != nil {
+			m.installButton.Hide()
+		}
+		if m.openButton != nil {
+			m.openButton.Show()
+		}
+		if m.statusLabel != nil {
+			m.statusLabel.SetText("✅ 安装完成！")
+		}
 
-	// 显示完成对话框
-	completeDialog := dialog.NewInformation("安装完成",
-		"Claude Code + K2 环境已成功安装！\n\n"+
-			"点击「打开 Claude Code」按钮开始使用。",
-		m.window)
-	completeDialog.Show()
+		// 延迟一点显示对话框，确保 UI 更新完成
+		time.AfterFunc(100*time.Millisecond, func() {
+			if m.window != nil {
+				completeDialog := dialog.NewInformation("安装完成",
+					"Claude Code + K2 环境已成功安装！\n\n"+
+						"点击「打开 Claude Code」按钮开始使用。",
+					m.window)
+				completeDialog.Show()
+			}
+		})
+	})
 }
 
 func (m *Manager) showTutorial() {
@@ -348,21 +424,31 @@ func (m *Manager) showTutorial() {
 	tutorial.Show()
 }
 
+// addLog 添加日志（线程安全）
+func (m *Manager) addLog(message string) {
+	// 将日志添加到日志显示区
+	m.updateUI(func() {
+		currentText := m.logsDisplay.Text
+		if currentText != "" {
+			currentText += "\n"
+		}
+		m.logsDisplay.SetText(currentText + message)
+	})
+}
+
 func (m *Manager) updateUI(fn func()) {
 	if fn == nil {
 		return
 	}
-	
-	// 使用 Fyne 的线程安全机制
-	// 确保 UI 操作在主线程中执行
-	if fyne.CurrentApp().Driver().CanvasForObject(m.window.Content()) != nil {
-		// 如果已经在主线程，直接执行
-		fn()
-	} else {
-		// 否则，安排在主线程执行
-		m.window.Canvas().Refresh(m.window.Content())
-		fn()
+
+	// 确保所有 UI 操作都在主线程中执行
+	if m.window == nil {
+		return
 	}
+
+	// 直接执行，让 Fyne 自己处理线程问题
+	// 因为我们已经在 goroutine 中了，所以直接调用即可
+	fn()
 }
 
 // openURL 打开网址
@@ -400,36 +486,52 @@ func (m *Manager) restoreClaudeConfig() {
 
 // openClaudeCode 打开 Claude Code
 func (m *Manager) openClaudeCode() {
+	// 根据操作系统检查相应的设置脚本
+	var setupScript string
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "windows":
-		// Windows: 打开新的命令提示符窗口
-		cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
-	case "darwin":
-		// macOS: 打开终端并运行 claude
-		script := `tell application "Terminal"
-			do script "claude"
-			activate
-		end tell`
-		cmd = exec.Command("osascript", "-e", script)
-	default:
-		// Linux: 尝试打开常见的终端
-		terminals := []string{"gnome-terminal", "konsole", "xterm", "xfce4-terminal"}
-		for _, term := range terminals {
-			if _, err := exec.LookPath(term); err == nil {
-				cmd = exec.Command(term, "-e", "claude")
-				break
-			}
+		// Windows: 检查批处理脚本
+		tempDir := os.TempDir()
+		setupScript = filepath.Join(tempDir, "claude_k2_setup.bat")
+		
+		if _, err := os.Stat(setupScript); err == nil {
+			// 有设置脚本，先运行设置再启动claude
+			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\" && claude", setupScript))
+		} else {
+			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
 		}
+	case "darwin":
+		// macOS: 检查bash脚本
+		setupScript = "/tmp/claude_k2_setup.sh"
+		
+		var script string
+		if _, err := os.Stat(setupScript); err == nil {
+			// 有设置脚本，先运行设置再启动claude
+			script = fmt.Sprintf(`tell application "Terminal"
+				do script "source %s && claude"
+				activate
+			end tell`, setupScript)
+		} else {
+			script = `tell application "Terminal"
+				do script "claude"
+				activate
+			end tell`
+		}
+		cmd = exec.Command("osascript", "-e", script)
 	}
 
 	if cmd != nil {
 		err := cmd.Start()
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("无法打开 Claude Code: %v", err), m.window)
+		} else {
+			// 成功启动，显示提示
+			dialog.ShowInformation("成功", "Claude Code 已启动！\n环境变量已自动设置为K2 API。", m.window)
 		}
 	} else {
-		dialog.ShowInformation("提示", "请在终端中运行 'claude' 命令", m.window)
+		// 这种情况不应该发生在Windows和Mac上
+		dialog.ShowError(fmt.Errorf("不支持的操作系统或无法启动终端"), m.window)
 	}
 }
