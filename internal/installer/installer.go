@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -322,119 +323,187 @@ func (i *Installer) installNodeJSWindows() error {
 		}
 	}
 	
-	// 多个下载源，提高成功率
-	nodeURLs := []string{
-		"https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi",
-		"https://cdn.npmmirror.com/binaries/node/v24.1.0/node-v24.1.0-x64.msi",
-		"https://nodejs.org/dist/v24.1.0/node-v24.1.0-x64.msi",
-	}
-
+	// 使用PowerShell脚本下载和安装
+	i.addLog("使用PowerShell脚本下载和安装Node.js...")
+	
 	tempDir := os.TempDir()
-	installerPath := filepath.Join(tempDir, "node-installer.msi")
+	scriptPath := filepath.Join(tempDir, "install_nodejs.ps1")
+	
+	// 创建PowerShell脚本
+	scriptContent := `
+# Node.js 安装脚本
+$ErrorActionPreference = "Stop"
 
-	var lastErr error
-	for idx, nodeURL := range nodeURLs {
-		i.addLog(fmt.Sprintf("尝试从源 %d 下载 Node.js 安装程序...", idx+1))
-		err := i.downloadFile(nodeURL, installerPath)
-		if err == nil {
-			i.addLog("Node.js 安装程序下载成功")
-			break
-		}
-		i.addLog(fmt.Sprintf("源 %d 下载失败: %v", idx+1, err))
-		lastErr = err
-		if idx < len(nodeURLs)-1 {
-			i.addLog("尝试下一个下载源...")
-		}
-	}
-	
-	if lastErr != nil {
-		return fmt.Errorf("所有下载源都失败: %v", lastErr)
-	}
+# 下载源列表
+$nodeURLs = @(
+    "https://mirrors.aliyun.com/nodejs-release/v24.1.0/node-v24.1.0-x64.msi",
+    "https://cdn.npmmirror.com/binaries/node/v24.1.0/node-v24.1.0-x64.msi",
+    "https://nodejs.org/dist/v24.1.0/node-v24.1.0-x64.msi"
+)
 
-	i.addLog("运行 Node.js 安装程序...")
-	i.addLog("注意：Node.js 安装可能需要几分钟时间，请耐心等待...")
-	
-	// 使用 /qn 完全静默安装，避免弹窗
-	// ADDLOCAL=ALL 确保安装所有组件包括 npm
-	// ALLUSERS=1 为所有用户安装
-	// /L*V 生成详细日志
-	logPath := filepath.Join(os.TempDir(), "nodejs_install.log")
-	cmd := exec.Command("msiexec", "/i", installerPath, "/qn", "/norestart", 
-		"ADDLOCAL=ALL", "ALLUSERS=1", "/L*V", logPath)
-	
-	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
-	
-	// 直接同步执行，避免日志显示问题
-	output, err := cmd.CombinedOutput()
-	
+$installerPath = "$env:TEMP\node-installer.msi"
+$downloaded = $false
+
+# 尝试每个下载源
+foreach ($url in $nodeURLs) {
+    Write-Host "尝试下载: $url" -ForegroundColor Yellow
+    try {
+        # 使用 Invoke-WebRequest 下载，设置超时
+        $ProgressPreference = 'SilentlyContinue'  # 禁用进度条以提高速度
+        Invoke-WebRequest -Uri $url -OutFile $installerPath -TimeoutSec 30 -UseBasicParsing
+        
+        # 检查文件是否存在且大小合理（至少10MB）
+        if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 10MB)) {
+            Write-Host "✅ 下载成功" -ForegroundColor Green
+            $downloaded = $true
+            break
+        } else {
+            Write-Host "❌ 文件大小异常" -ForegroundColor Red
+            Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Host "❌ 下载失败: $_" -ForegroundColor Red
+    }
+}
+
+if (-not $downloaded) {
+    Write-Host "❌ 所有下载源都失败了" -ForegroundColor Red
+    exit 1
+}
+
+# 安装 Node.js
+Write-Host "开始安装 Node.js..." -ForegroundColor Yellow
+$logPath = "$env:TEMP\nodejs_install.log"
+
+try {
+    # 静默安装
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", $installerPath, "/qn", "/norestart", "ADDLOCAL=ALL", "ALLUSERS=1", "/L*V", $logPath -Wait -PassThru
+    
+    if ($process.ExitCode -eq 0) {
+        Write-Host "✅ Node.js 安装成功" -ForegroundColor Green
+    } else {
+        Write-Host "❌ Node.js 安装失败，退出代码: $($process.ExitCode)" -ForegroundColor Red
+        
+        # 显示部分安装日志
+        if (Test-Path $logPath) {
+            Write-Host "安装日志（最后50行）:" -ForegroundColor Yellow
+            Get-Content $logPath -Tail 50
+        }
+        exit $process.ExitCode
+    }
+} catch {
+    Write-Host "❌ 安装过程出错: $_" -ForegroundColor Red
+    exit 1
+} finally {
+    # 清理安装文件
+    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+}
+
+# 刷新环境变量
+Write-Host "刷新环境变量..." -ForegroundColor Yellow
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# 验证安装
+Write-Host "验证 Node.js 安装..." -ForegroundColor Yellow
+try {
+    $nodeVersion = & node --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✅ Node.js 已成功安装: $nodeVersion" -ForegroundColor Green
+    } else {
+        # 尝试使用完整路径
+        $nodePath = "C:\Program Files\nodejs\node.exe"
+        if (Test-Path $nodePath) {
+            $nodeVersion = & $nodePath --version 2>&1
+            Write-Host "✅ Node.js 已安装到: $nodePath" -ForegroundColor Green
+            Write-Host "   版本: $nodeVersion" -ForegroundColor Green
+            Write-Host "⚠️  可能需要重启终端才能直接使用 'node' 命令" -ForegroundColor Yellow
+        } else {
+            Write-Host "⚠️  Node.js 已安装但需要重启终端才能使用" -ForegroundColor Yellow
+        }
+    }
+} catch {
+    Write-Host "⚠️  验证时出错，但安装可能已成功，请重启终端后再试" -ForegroundColor Yellow
+}
+
+Write-Host "✅ Node.js 安装脚本执行完成" -ForegroundColor Green
+`
+
+	// 写入脚本文件
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
-		i.addLog(fmt.Sprintf("❌ Node.js 安装程序执行失败: %v", err))
-		if len(output) > 0 {
-			i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+	
+	// 执行PowerShell脚本
+	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	
+	// 创建管道读取输出
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("创建输出管道失败: %v", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("创建错误管道失败: %v", err)
+	}
+	
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动安装脚本失败: %v", err)
+	}
+	
+	// 实时读取输出
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			i.addLog(scanner.Text())
 		}
-		
-		// 读取详细安装日志
-		if logData, logErr := os.ReadFile(logPath); logErr == nil && len(logData) > 0 {
-			i.addLog("=== Node.js 详细安装日志 ===")
-			logContent := string(logData)
-			// 只显示最后1000行，避免日志过长
-			lines := strings.Split(logContent, "\n")
-			if len(lines) > 1000 {
-				lines = lines[len(lines)-1000:]
-				i.addLog("... (日志已截断，显示最后1000行)")
-			}
-			i.addLog(strings.Join(lines, "\n"))
-			i.addLog("=== 安装日志结束 ===")
+	}()
+	
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			i.addLog(fmt.Sprintf("错误: %s", scanner.Text()))
 		}
-		
-		// 等待用户看到错误信息
-		time.Sleep(5 * time.Second)
+	}()
+	
+	// 等待命令完成
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("Node.js 安装失败，退出代码: %d", exitErr.ExitCode())
+		}
 		return fmt.Errorf("Node.js 安装失败: %v", err)
 	}
 	
-	i.addLog("✅ Node.js 安装程序执行完成")
-	if len(output) > 0 {
-		i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
-	}
+	// 等待一下让输出完全显示
+	time.Sleep(2 * time.Second)
 	
-	i.addLog("Node.js 安装完成，正在验证...")
-
-	// 清理安装文件
-	os.Remove(installerPath)
-
-	// Windows 下需要刷新环境变量
-	i.addLog("刷新系统环境变量...")
-	// 通知系统环境变量已更改
-	cmd = exec.Command("setx", "NODE_REFRESH", "1")
-	cmd.Run() // 忽略错误
-
-	// 等待一下让系统处理
-	time.Sleep(3 * time.Second)
-
-	// 验证安装是否成功
+	// 再次验证安装
 	if err := i.checkNodeJS(); err == nil {
-		i.addLog("✅ Node.js 安装成功并已添加到PATH")
+		i.addLog("✅ Node.js 安装验证成功")
 		return nil
 	}
-
-	// 尝试直接使用完整路径验证安装
+	
+	// 如果验证失败，但安装脚本成功，说明可能需要重启
+	i.addLog("⚠️ Node.js 已安装，但可能需要重启终端或系统才能生效")
+	
+	// 尝试设置临时环境变量
 	possiblePaths := []string{
-		`C:\Program Files\nodejs\node.exe`,
-		`C:\Program Files (x86)\nodejs\node.exe`,
-		filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "node.exe"),
+		`C:\Program Files\nodejs`,
+		`C:\Program Files (x86)\nodejs`,
+		filepath.Join(os.Getenv("ProgramFiles"), "nodejs"),
 	}
-
+	
 	for _, nodePath := range possiblePaths {
-		if _, err := os.Stat(nodePath); err == nil {
-			i.addLog(fmt.Sprintf("Node.js 已安装到: %s", nodePath))
-			// 设置临时环境变量供后续使用
-			os.Setenv("PATH", fmt.Sprintf("%s;%s", filepath.Dir(nodePath), os.Getenv("PATH")))
-			return nil
+		nodeExe := filepath.Join(nodePath, "node.exe")
+		if _, err := os.Stat(nodeExe); err == nil {
+			os.Setenv("PATH", fmt.Sprintf("%s;%s", nodePath, os.Getenv("PATH")))
+			i.addLog(fmt.Sprintf("已将 %s 添加到临时PATH", nodePath))
+			break
 		}
 	}
-
-	// 如果找不到，但安装没报错，可能需要重启
-	i.addLog("⚠️ Node.js 安装完成，但可能需要重启终端才能使用")
+	
 	return nil
 }
 
@@ -589,112 +658,187 @@ func (i *Installer) installGit() error {
 }
 
 func (i *Installer) installGitWindows() error {
-	// 多个下载源，提高成功率
-	gitURLs := []string{
-		"https://cdn.npmmirror.com/binaries/git-for-windows/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
-		"https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
-		"https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
-	}
-
+	// 使用PowerShell脚本下载和安装
+	i.addLog("使用PowerShell脚本下载和安装Git...")
+	
 	tempDir := os.TempDir()
-	installerPath := filepath.Join(tempDir, "git-installer.exe")
+	scriptPath := filepath.Join(tempDir, "install_git.ps1")
+	
+	// 创建PowerShell脚本
+	scriptContent := `
+# Git 安装脚本
+$ErrorActionPreference = "Stop"
 
-	var lastErr error
-	for idx, gitURL := range gitURLs {
-		i.addLog(fmt.Sprintf("尝试从源 %d 下载 Git 安装程序...", idx+1))
-		err := i.downloadFile(gitURL, installerPath)
-		if err == nil {
-			i.addLog("Git 安装程序下载成功")
-			break
-		}
-		i.addLog(fmt.Sprintf("源 %d 下载失败: %v", idx+1, err))
-		lastErr = err
-		if idx < len(gitURLs)-1 {
-			i.addLog("尝试下一个下载源...")
-		}
-	}
-	
-	if lastErr != nil {
-		return fmt.Errorf("所有下载源都失败: %v", lastErr)
-	}
+# 下载源列表
+$gitURLs = @(
+    "https://cdn.npmmirror.com/binaries/git-for-windows/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
+    "https://github.com/git-for-windows/git/releases/download/v2.50.1.windows.1/Git-2.50.1-64-bit.exe",
+    "https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/v2.50.1.windows.1/Git-2.50.1-64-bit.exe"
+)
 
-	i.addLog("运行 Git 安装程序...")
-	i.addLog("注意：Git 安装可能需要几分钟时间，请耐心等待...")
-	
-	// /VERYSILENT 静默安装
-	// /NORESTART 不重启
-	// /LOG 生成安装日志
-	logPath := filepath.Join(os.TempDir(), "git_install.log")
-	cmd := exec.Command(installerPath, "/VERYSILENT", "/NORESTART", "/NOCANCEL", 
-		"/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/LOG="+logPath)
-	
-	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
-	
-	// 直接同步执行，避免日志显示问题
-	output, err := cmd.CombinedOutput()
-	
+$installerPath = "$env:TEMP\git-installer.exe"
+$downloaded = $false
+
+# 尝试每个下载源
+foreach ($url in $gitURLs) {
+    Write-Host "尝试下载: $url" -ForegroundColor Yellow
+    try {
+        # 使用 Invoke-WebRequest 下载，设置超时
+        $ProgressPreference = 'SilentlyContinue'  # 禁用进度条以提高速度
+        Invoke-WebRequest -Uri $url -OutFile $installerPath -TimeoutSec 30 -UseBasicParsing
+        
+        # 检查文件是否存在且大小合理（至少10MB）
+        if ((Test-Path $installerPath) -and ((Get-Item $installerPath).Length -gt 10MB)) {
+            Write-Host "✅ 下载成功" -ForegroundColor Green
+            $downloaded = $true
+            break
+        } else {
+            Write-Host "❌ 文件大小异常" -ForegroundColor Red
+            Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Host "❌ 下载失败: $_" -ForegroundColor Red
+    }
+}
+
+if (-not $downloaded) {
+    Write-Host "❌ 所有下载源都失败了" -ForegroundColor Red
+    exit 1
+}
+
+# 安装 Git
+Write-Host "开始安装 Git..." -ForegroundColor Yellow
+$logPath = "$env:TEMP\git_install.log"
+
+try {
+    # 静默安装
+    $process = Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/LOG=$logPath" -Wait -PassThru
+    
+    if ($process.ExitCode -eq 0) {
+        Write-Host "✅ Git 安装成功" -ForegroundColor Green
+    } else {
+        Write-Host "❌ Git 安装失败，退出代码: $($process.ExitCode)" -ForegroundColor Red
+        
+        # 显示部分安装日志
+        if (Test-Path $logPath) {
+            Write-Host "安装日志（最后50行）:" -ForegroundColor Yellow
+            Get-Content $logPath -Tail 50
+        }
+        exit $process.ExitCode
+    }
+} catch {
+    Write-Host "❌ 安装过程出错: $_" -ForegroundColor Red
+    exit 1
+} finally {
+    # 清理安装文件
+    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+}
+
+# 刷新环境变量
+Write-Host "刷新环境变量..." -ForegroundColor Yellow
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+# 验证安装
+Write-Host "验证 Git 安装..." -ForegroundColor Yellow
+try {
+    $gitVersion = & git --version 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✅ Git 已成功安装: $gitVersion" -ForegroundColor Green
+    } else {
+        # 尝试使用完整路径
+        $gitPath = "C:\Program Files\Git\bin\git.exe"
+        if (Test-Path $gitPath) {
+            $gitVersion = & $gitPath --version 2>&1
+            Write-Host "✅ Git 已安装到: $gitPath" -ForegroundColor Green
+            Write-Host "   版本: $gitVersion" -ForegroundColor Green
+            Write-Host "⚠️  可能需要重启终端才能直接使用 'git' 命令" -ForegroundColor Yellow
+        } else {
+            Write-Host "⚠️  Git 已安装但需要重启终端才能使用" -ForegroundColor Yellow
+        }
+    }
+} catch {
+    Write-Host "⚠️  验证时出错，但安装可能已成功，请重启终端后再试" -ForegroundColor Yellow
+}
+
+Write-Host "✅ Git 安装脚本执行完成" -ForegroundColor Green
+`
+
+	// 写入脚本文件
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
-		i.addLog(fmt.Sprintf("❌ Git 安装程序执行失败: %v", err))
-		if len(output) > 0 {
-			i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+	
+	// 执行PowerShell脚本
+	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	
+	// 创建管道读取输出
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("创建输出管道失败: %v", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("创建错误管道失败: %v", err)
+	}
+	
+	// 启动命令
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动安装脚本失败: %v", err)
+	}
+	
+	// 实时读取输出
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			i.addLog(scanner.Text())
 		}
-		
-		// 读取详细安装日志
-		if logData, logErr := os.ReadFile(logPath); logErr == nil && len(logData) > 0 {
-			i.addLog("=== Git 详细安装日志 ===")
-			logContent := string(logData)
-			// 只显示最后1000行，避免日志过长
-			lines := strings.Split(logContent, "\n")
-			if len(lines) > 1000 {
-				lines = lines[len(lines)-1000:]
-				i.addLog("... (日志已截断，显示最后1000行)")
-			}
-			i.addLog(strings.Join(lines, "\n"))
-			i.addLog("=== 安装日志结束 ===")
+	}()
+	
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			i.addLog(fmt.Sprintf("错误: %s", scanner.Text()))
 		}
-		
-		// 等待用户看到错误信息
-		time.Sleep(5 * time.Second)
+	}()
+	
+	// 等待命令完成
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("Git 安装失败，退出代码: %d", exitErr.ExitCode())
+		}
 		return fmt.Errorf("Git 安装失败: %v", err)
 	}
 	
-	i.addLog("✅ Git 安装程序执行完成")
-	if len(output) > 0 {
-		i.addLog(fmt.Sprintf("📄 安装程序输出: %s", string(output)))
-	}
+	// 等待一下让输出完全显示
+	time.Sleep(2 * time.Second)
 	
-	i.addLog("Git 安装完成，正在验证...")
-
-	// 清理安装文件
-	os.Remove(installerPath)
-
-	// Windows 下需要刷新环境变量
-	i.addLog("刷新 Git 环境变量...")
-	time.Sleep(3 * time.Second)
-
-	// 验证安装是否成功
+	// 再次验证安装
 	if err := i.checkGit(); err == nil {
-		i.addLog("✅ Git 安装成功并已添加到PATH")
+		i.addLog("✅ Git 安装验证成功")
 		return nil
 	}
-
-	// 如果PATH中没有，尝试直接使用完整路径验证安装
-	possibleGitPaths := []string{
-		`C:\Program Files\Git\bin\git.exe`,
-		`C:\Program Files (x86)\Git\bin\git.exe`,
-		filepath.Join(os.Getenv("ProgramFiles"), "Git", "bin", "git.exe"),
+	
+	// 如果验证失败，但安装脚本成功，说明可能需要重启
+	i.addLog("⚠️ Git 已安装，但可能需要重启终端或系统才能生效")
+	
+	// 尝试设置临时环境变量
+	possiblePaths := []string{
+		`C:\Program Files\Git\bin`,
+		`C:\Program Files (x86)\Git\bin`,
+		filepath.Join(os.Getenv("ProgramFiles"), "Git", "bin"),
 	}
-
-	for _, gitPath := range possibleGitPaths {
-		if _, err := os.Stat(gitPath); err == nil {
-			i.addLog(fmt.Sprintf("Git 已安装到: %s", gitPath))
-			// 设置临时环境变量供后续使用
-			os.Setenv("PATH", fmt.Sprintf("%s;%s", filepath.Dir(gitPath), os.Getenv("PATH")))
-			return nil
+	
+	for _, gitPath := range possiblePaths {
+		gitExe := filepath.Join(gitPath, "git.exe")
+		if _, err := os.Stat(gitExe); err == nil {
+			os.Setenv("PATH", fmt.Sprintf("%s;%s", gitPath, os.Getenv("PATH")))
+			i.addLog(fmt.Sprintf("已将 %s 添加到临时PATH", gitPath))
+			break
 		}
 	}
-
-	i.addLog("⚠️ Git 安装完成，但可能需要重启终端才能使用")
+	
 	return nil
 }
 
