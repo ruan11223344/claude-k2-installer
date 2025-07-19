@@ -595,12 +595,19 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 			
 			for envVar, value := range envVars {
 				// 设置用户级环境变量（使用 setx）
+				i.addLog(fmt.Sprintf("🔧 执行命令: setx %s \"%s\"", envVar, value))
 				cmd := exec.Command("setx", envVar, value)
-				err := cmd.Run()
+				output, err := cmd.CombinedOutput()
 				if err != nil {
 					i.addLog(fmt.Sprintf("⚠️ 设置环境变量 %s 失败: %v", envVar, err))
+					if len(output) > 0 {
+						i.addLog(fmt.Sprintf("   错误输出: %s", string(output)))
+					}
 				} else {
-					i.addLog(fmt.Sprintf("✅ 已设置用户环境变量: %s", envVar))
+					i.addLog(fmt.Sprintf("✅ 已设置用户环境变量: %s = %s", envVar, value))
+					if len(output) > 0 {
+						i.addLog(fmt.Sprintf("   命令输出: %s", string(output)))
+					}
 				}
 			}
 			
