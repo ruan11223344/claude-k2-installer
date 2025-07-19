@@ -610,22 +610,22 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 			
 			// 获取临时目录
 			tempDir := os.TempDir()
+			// 使用批处理脚本，更稳定可靠
 			scriptPath := filepath.Join(tempDir, "claude_k2_setup.bat")
-			// 改用PowerShell脚本，避免set命令卡死问题
-			scriptPath = filepath.Join(tempDir, "claude_k2_setup.ps1")
-			scriptContent := fmt.Sprintf(`# Claude Code K2 临时环境变量设置脚本
-$env:ANTHROPIC_BASE_URL="https://api.moonshot.cn/anthropic/"
-$env:ANTHROPIC_API_KEY="%s"
-$env:CLAUDE_REQUEST_DELAY_MS="%d"
-$env:CLAUDE_MAX_CONCURRENT_REQUESTS="1"
-$env:ANTHROPIC_AUTH_TOKEN=""
+			scriptContent := fmt.Sprintf(`@echo off
+REM Claude Code K2 临时环境变量设置脚本
+set "ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic/"
+set "ANTHROPIC_API_KEY=%s"
+set "CLAUDE_REQUEST_DELAY_MS=%d"
+set "CLAUDE_MAX_CONCURRENT_REQUESTS=1"
+set "ANTHROPIC_AUTH_TOKEN="
 
-Write-Host "✅ K2环境变量已设置：" -ForegroundColor Green
-Write-Host "  - API Key: %s..." -ForegroundColor Yellow
-Write-Host "  - Base URL: https://api.moonshot.cn/anthropic/" -ForegroundColor Yellow
-Write-Host "  - 请求延迟: %d毫秒" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "现在可以运行 'claude' 命令使用K2 API" -ForegroundColor Cyan
+echo ✅ K2环境变量已设置：
+echo   - API Key: %s...
+echo   - Base URL: https://api.moonshot.cn/anthropic/
+echo   - 请求延迟: %d毫秒
+echo.
+echo 现在可以运行 'claude' 命令使用K2 API
 `, apiKey, requestDelay, apiKey[:10], requestDelay)
 
 			err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
