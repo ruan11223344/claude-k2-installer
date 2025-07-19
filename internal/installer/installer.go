@@ -703,27 +703,12 @@ if [ "$FILE_SIZE" -lt 1000000 ]; then
     exit 1
 fi
 
-echo "[STEP 5] Installing Node.js (requires admin password)..."
-echo "Please enter your password when prompted:"
+echo "[STEP 5] Node.js installation ready"
+echo "Installation will be performed with administrator privileges"
 
-# Install with sudo
-if sudo installer -pkg "$INSTALLER_PATH" -target / -verboseR; then
-    echo "[STEP 6] Node.js installation completed successfully"
-    
-    # Verify installation
-    if /usr/local/bin/node --version >/dev/null 2>&1; then
-        NODE_VERSION=$(/usr/local/bin/node --version)
-        echo "Node.js installed successfully: $NODE_VERSION"
-        exit 0
-    else
-        echo "Warning: Installation completed but node command not found in PATH"
-        echo "You may need to restart your terminal"
-        exit 0
-    fi
-else
-    echo "ERROR: Installation failed"
-    exit 1
-fi
+# 保存安装器路径到临时文件，供 osascript 使用
+echo "$INSTALLER_PATH" > /tmp/nodejs_installer_path.txt
+exit 0
 `, installerPath)
 
 	// 写入脚本文件
@@ -740,15 +725,45 @@ fi
 	cmd := exec.Command("bash", scriptPath)
 	cmd.Dir = tempDir
 
-	// 使用流式执行避免UI卡住，并支持sudo密码输入
+	// 使用流式执行下载
 	err = i.executeCommandWithStreaming(cmd)
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf("Node.js 安装失败，退出代码: %d", exitErr.ExitCode())
+			return fmt.Errorf("Node.js 下载失败，退出代码: %d", exitErr.ExitCode())
 		}
-		return fmt.Errorf("Node.js 安装失败: %v", err)
+		return fmt.Errorf("Node.js 下载失败: %v", err)
 	}
+	
+	// 读取安装器路径
+	installerPathBytes, err := os.ReadFile("/tmp/nodejs_installer_path.txt")
+	if err == nil {
+		installerPath = strings.TrimSpace(string(installerPathBytes))
+		os.Remove("/tmp/nodejs_installer_path.txt")
+	}
+	
+	// 检查安装包是否存在
+	if _, err := os.Stat(installerPath); err != nil {
+		return fmt.Errorf("安装包不存在: %s", installerPath)
+	}
+	
+	i.addLog("正在安装 Node.js...")
+	i.addLog("⚠️  系统将弹出密码输入框，请输入您的密码")
+	
+	// 使用 osascript 以管理员权限安装
+	installScript := fmt.Sprintf(`do shell script "installer -pkg '%s' -target /" with administrator privileges`, installerPath)
+	installCmd := exec.Command("osascript", "-e", installScript)
+	
+	output, err := installCmd.CombinedOutput()
+	if err != nil {
+		// 如果用户取消了密码输入
+		if strings.Contains(err.Error(), "User canceled") {
+			return fmt.Errorf("用户取消了密码输入")
+		}
+		return fmt.Errorf("Node.js 安装失败: %v\n输出: %s", err, string(output))
+	}
+	
+	i.addLog("✅ Node.js 安装完成！")
 
 	// 再次验证安装
 	if err := i.checkNodeJS(); err == nil {
