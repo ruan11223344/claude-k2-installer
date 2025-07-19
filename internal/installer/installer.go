@@ -746,32 +746,76 @@ echo "现在可以运行 'claude' 命令使用K2 API"
   "hasCompletedOnboarding": true
 }`
 	
+	i.addLog(fmt.Sprintf("🔍 检查配置文件路径: %s", claudeJsonPath))
+	
 	// 检查是否存在备份文件但主文件不存在
 	if _, err := os.Stat(claudeJsonPath); os.IsNotExist(err) {
+		i.addLog("📝 主配置文件不存在，尝试创建...")
+		
 		if _, backupErr := os.Stat(backupPath); backupErr == nil {
+			i.addLog("📋 发现备份文件，尝试恢复...")
 			// 从备份文件复制内容
 			if backupData, readErr := os.ReadFile(backupPath); readErr == nil {
 				if writeErr := os.WriteFile(claudeJsonPath, backupData, 0644); writeErr == nil {
 					i.addLog("✅ 已从备份文件恢复 .claude.json")
 				} else {
 					i.addLog(fmt.Sprintf("⚠️ 从备份恢复失败: %v", writeErr))
+					// 尝试强制创建新文件
+					i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
 				}
+			} else {
+				i.addLog(fmt.Sprintf("⚠️ 读取备份文件失败: %v", readErr))
+				i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
 			}
 		} else {
-			// 创建新的配置文件
-			err = os.WriteFile(claudeJsonPath, []byte(claudeJson), 0644)
-			if err != nil {
-				i.addLog(fmt.Sprintf("⚠️ 创建 .claude.json 失败: %v", err))
-			} else {
-				i.addLog("✅ 已创建 .claude.json 以跳过登录流程")
-			}
+			i.addLog("📄 没有备份文件，创建新配置文件...")
+			i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
 		}
+	} else if err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 检查配置文件时出错: %v", err))
+		i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
 	} else {
 		i.addLog("✅ .claude.json 文件已存在")
 	}
 
 	i.addLog("K2 API 配置完成")
 	return nil
+}
+
+// forceCreateClaudeConfig 强制创建Claude配置文件
+func (i *Installer) forceCreateClaudeConfig(filePath, content string) {
+	i.addLog("💪 尝试强制创建配置文件...")
+	
+	// 方法1: 直接写入
+	if err := os.WriteFile(filePath, []byte(content), 0644); err == nil {
+		i.addLog("✅ 方法1成功: 直接写入")
+		return
+	} else {
+		i.addLog(fmt.Sprintf("⚠️ 方法1失败: %v", err))
+	}
+	
+	// 方法2: 尝试更宽松的权限
+	if err := os.WriteFile(filePath, []byte(content), 0666); err == nil {
+		i.addLog("✅ 方法2成功: 宽松权限写入")
+		return
+	} else {
+		i.addLog(fmt.Sprintf("⚠️ 方法2失败: %v", err))
+	}
+	
+	// 方法3: 创建文件后写入
+	if file, err := os.Create(filePath); err == nil {
+		defer file.Close()
+		if _, writeErr := file.WriteString(content); writeErr == nil {
+			i.addLog("✅ 方法3成功: 创建文件后写入")
+			return
+		} else {
+			i.addLog(fmt.Sprintf("⚠️ 方法3写入失败: %v", writeErr))
+		}
+	} else {
+		i.addLog(fmt.Sprintf("⚠️ 方法3创建失败: %v", err))
+	}
+	
+	i.addLog("❌ 所有方法都失败了，配置文件创建失败")
 }
 
 func (i *Installer) verifyInstallation() error {
