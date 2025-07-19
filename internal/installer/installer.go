@@ -158,6 +158,30 @@ func (i *Installer) checkNodeJS() error {
 		pathEnv := os.Getenv("PATH")
 		i.addLog(fmt.Sprintf("当前 PATH: %s", pathEnv))
 		
+		// Windows 特殊处理：检查常见的安装位置
+		if runtime.GOOS == "windows" {
+			i.addLog("正在检查 Windows 常见的 Node.js 安装位置...")
+			commonPaths := []string{
+				`C:\Program Files\nodejs\node.exe`,
+				`C:\Program Files (x86)\nodejs\node.exe`,
+				filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "node.exe"),
+				filepath.Join(os.Getenv("ProgramFiles(x86)"), "nodejs", "node.exe"),
+			}
+			
+			for _, path := range commonPaths {
+				if _, err := os.Stat(path); err == nil {
+					i.addLog(fmt.Sprintf("发现 Node.js 在: %s", path))
+					// 尝试运行找到的 node
+					testCmd := exec.Command(path, "--version")
+					if testOutput, testErr := testCmd.Output(); testErr == nil {
+						version := strings.TrimSpace(string(testOutput))
+						i.addLog(fmt.Sprintf("版本: %s", version))
+						return i.validateNodeVersion(version)
+					}
+				}
+			}
+		}
+		
 		// macOS 特殊处理：检查常见的安装位置
 		if runtime.GOOS == "darwin" {
 			i.addLog("正在检查 macOS 常见的 Node.js 安装位置...")
@@ -272,19 +296,58 @@ func (i *Installer) installNodeJSWindows() error {
 	}
 
 	i.addLog("运行 Node.js 安装程序...")
-	// 使用 /qn 而不是 /quiet 以确保静默安装
+	i.addLog("注意：Node.js 安装可能需要几分钟时间，请耐心等待...")
+	
+	// 使用 /qb 而不是 /qn 以显示进度条但不需要用户交互
 	// ADDLOCAL=ALL 确保安装所有组件包括 npm
 	// ALLUSERS=1 为所有用户安装
-	cmd := exec.Command("msiexec", "/i", installerPath, "/qn", "/norestart", "ADDLOCAL=ALL", "ALLUSERS=1")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		i.addLog(fmt.Sprintf("Node.js 安装程序执行失败: %v", err))
-		if len(output) > 0 {
-			i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+	// /L*V 生成详细日志
+	logPath := filepath.Join(os.TempDir(), "nodejs_install.log")
+	cmd := exec.Command("msiexec", "/i", installerPath, "/qb", "/norestart", 
+		"ADDLOCAL=ALL", "ALLUSERS=1", "/L*V", logPath)
+	
+	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
+	
+	// 设置较长的超时时间
+	timeout := 10 * time.Minute
+	done := make(chan error, 1)
+	
+	go func() {
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			i.addLog(fmt.Sprintf("Node.js 安装程序执行失败: %v", err))
+			if len(output) > 0 {
+				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+			}
+		} else {
+			i.addLog("Node.js 安装程序执行完成")
+			if len(output) > 0 {
+				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+			}
 		}
-		return fmt.Errorf("安装失败: %v", err)
+		done <- err
+	}()
+	
+	select {
+	case err := <-done:
+		if err != nil {
+			// 读取安装日志
+			if logData, logErr := os.ReadFile(logPath); logErr == nil {
+				i.addLog("=== Node.js 安装日志 ===")
+				i.addLog(string(logData))
+				i.addLog("=== 安装日志结束 ===")
+			}
+			return fmt.Errorf("安装失败: %v", err)
+		}
+	case <-time.After(timeout):
+		// 强制终止进程
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return fmt.Errorf("安装超时（超过 %v）", timeout)
 	}
-	i.addLog("Node.js 安装程序执行完成")
+	
+	i.addLog("Node.js 安装完成，正在验证...")
 
 	// 清理安装文件
 	os.Remove(installerPath)
@@ -506,19 +569,57 @@ func (i *Installer) installGitWindows() error {
 	}
 
 	i.addLog("运行 Git 安装程序...")
+	i.addLog("注意：Git 安装可能需要几分钟时间，请耐心等待...")
+	
 	// /VERYSILENT 静默安装
 	// /NORESTART 不重启
-	// /COMPONENTS="icons,ext\reg\shellhere,assoc,assoc_sh" 安装基本组件
-	cmd := exec.Command(installerPath, "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		i.addLog(fmt.Sprintf("Git 安装程序执行失败: %v", err))
-		if len(output) > 0 {
-			i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+	// /LOG 生成安装日志
+	logPath := filepath.Join(os.TempDir(), "git_install.log")
+	cmd := exec.Command(installerPath, "/VERYSILENT", "/NORESTART", "/NOCANCEL", 
+		"/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/LOG="+logPath)
+	
+	i.addLog(fmt.Sprintf("执行命令: %s", cmd.String()))
+	
+	// 设置较长的超时时间
+	timeout := 10 * time.Minute
+	done := make(chan error, 1)
+	
+	go func() {
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			i.addLog(fmt.Sprintf("Git 安装程序执行失败: %v", err))
+			if len(output) > 0 {
+				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+			}
+		} else {
+			i.addLog("Git 安装程序执行完成")
+			if len(output) > 0 {
+				i.addLog(fmt.Sprintf("安装程序输出: %s", string(output)))
+			}
 		}
-		return fmt.Errorf("安装失败: %v", err)
+		done <- err
+	}()
+	
+	select {
+	case err := <-done:
+		if err != nil {
+			// 读取安装日志
+			if logData, logErr := os.ReadFile(logPath); logErr == nil {
+				i.addLog("=== Git 安装日志 ===")
+				i.addLog(string(logData))
+				i.addLog("=== 安装日志结束 ===")
+			}
+			return fmt.Errorf("安装失败: %v", err)
+		}
+	case <-time.After(timeout):
+		// 强制终止进程
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return fmt.Errorf("安装超时（超过 %v）", timeout)
 	}
-	i.addLog("Git 安装程序执行完成")
+	
+	i.addLog("Git 安装完成，正在验证...")
 
 	// 清理安装文件
 	os.Remove(installerPath)
