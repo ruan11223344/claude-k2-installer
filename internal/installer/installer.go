@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -48,9 +47,9 @@ func (i *Installer) Install() {
 		allowFailure bool // 允许失败并继续的标志
 	}{
 		{"检查系统环境", i.checkSystem, 5, false},
-		{"检测 Node.js", i.checkNodeJS, 10, true},  // 允许检测失败，因为后面会安装
+		{"检测 Node.js", i.checkNodeJS, 10, true}, // 允许检测失败，因为后面会安装
 		{"安装 Node.js", i.installNodeJS, 20, false},
-		{"检测 Git", i.checkGit, 10, true},          // 允许检测失败，因为后面会安装
+		{"检测 Git", i.checkGit, 10, true}, // 允许检测失败，因为后面会安装
 		{"安装 Git", i.installGit, 20, false},
 		{"安装 Claude Code", i.installClaudeCode, 20, false},
 		{"验证安装", i.verifyInstallation, 5, false},
@@ -107,7 +106,7 @@ func getHomebrewPrefix() string {
 	if err == nil {
 		return strings.TrimSpace(string(output))
 	}
-	
+
 	// 如果 brew 命令失败，检查常见位置
 	if runtime.GOARCH == "arm64" {
 		// Apple Silicon
@@ -120,7 +119,7 @@ func getHomebrewPrefix() string {
 			return "/usr/local"
 		}
 	}
-	
+
 	return ""
 }
 
@@ -128,7 +127,7 @@ func (i *Installer) checkNodeJS() error {
 	// 首先尝试使用 which/where 命令查找 node
 	var lookupCmd string
 	var lookupArgs []string
-	
+
 	if runtime.GOOS == "windows" {
 		lookupCmd = "where"
 		lookupArgs = []string{"node"}
@@ -136,11 +135,11 @@ func (i *Installer) checkNodeJS() error {
 		lookupCmd = "which"
 		lookupArgs = []string{"node"}
 	}
-	
+
 	// 使用 which/where 查找 node
 	cmd := exec.Command(lookupCmd, lookupArgs...)
 	lookupOutput, lookupErr := cmd.Output()
-	
+
 	if lookupErr == nil {
 		// 找到了 node 命令的路径
 		nodePath := strings.TrimSpace(string(lookupOutput))
@@ -153,26 +152,26 @@ func (i *Installer) checkNodeJS() error {
 			i.addLog(fmt.Sprintf("通过 %s 找到 Node.js: %s", lookupCmd, nodePath))
 		}
 	}
-	
+
 	// 尝试直接执行 node 命令
 	cmd = exec.Command("node", "--version")
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		// 如果失败，显示更详细的错误信息
 		i.addLog(fmt.Sprintf("执行 'node --version' 失败: %v", err))
 		if len(output) > 0 {
 			i.addLog(fmt.Sprintf("错误输出: %s", string(output)))
 		}
-		
+
 		// 检查 PATH 环境变量
 		pathEnv := os.Getenv("PATH")
 		i.addLog(fmt.Sprintf("当前 PATH: %s", pathEnv))
-		
+
 		// Windows 特殊处理：检查常见的安装位置
 		if runtime.GOOS == "windows" {
 			i.addLog("正在检查 Windows 常见的 Node.js 安装位置...")
-			
+
 			// 先检查PATH中的nodejs目录
 			pathDirs := strings.Split(pathEnv, ";")
 			for _, dir := range pathDirs {
@@ -197,7 +196,7 @@ func (i *Installer) checkNodeJS() error {
 					}
 				}
 			}
-			
+
 			// 再检查标准安装位置
 			commonPaths := []string{
 				`C:\Program Files\nodejs\node.exe`,
@@ -205,7 +204,7 @@ func (i *Installer) checkNodeJS() error {
 				filepath.Join(os.Getenv("ProgramFiles"), "nodejs", "node.exe"),
 				filepath.Join(os.Getenv("ProgramFiles(x86)"), "nodejs", "node.exe"),
 			}
-			
+
 			for _, path := range commonPaths {
 				if _, err := os.Stat(path); err == nil {
 					i.addLog(fmt.Sprintf("发现 Node.js 在: %s", path))
@@ -219,16 +218,16 @@ func (i *Installer) checkNodeJS() error {
 				}
 			}
 		}
-		
+
 		// macOS 特殊处理：检查常见的安装位置
 		if runtime.GOOS == "darwin" {
 			i.addLog("正在检查 macOS 常见的 Node.js 安装位置...")
 			commonPaths := []string{
-				"/opt/homebrew/bin/node",     // Apple Silicon Homebrew
-				"/usr/local/bin/node",         // Intel Homebrew
-				"/usr/bin/node",               // 系统默认
+				"/opt/homebrew/bin/node", // Apple Silicon Homebrew
+				"/usr/local/bin/node",    // Intel Homebrew
+				"/usr/bin/node",          // 系统默认
 			}
-			
+
 			for _, path := range commonPaths {
 				if _, err := os.Stat(path); err == nil {
 					i.addLog(fmt.Sprintf("发现 Node.js 在: %s", path))
@@ -237,14 +236,14 @@ func (i *Installer) checkNodeJS() error {
 					if testOutput, testErr := testCmd.Output(); testErr == nil {
 						version := strings.TrimSpace(string(testOutput))
 						i.addLog(fmt.Sprintf("版本: %s", version))
-						
+
 						// 将目录添加到当前进程的 PATH 中
 						nodeDir := filepath.Dir(path)
 						currentPath := os.Getenv("PATH")
 						newPath := nodeDir + ":" + currentPath
 						os.Setenv("PATH", newPath)
 						i.addLog(fmt.Sprintf("已将 %s 添加到 PATH 环境变量", nodeDir))
-						
+
 						// 重新检查版本
 						if checkErr := i.validateNodeVersion(version); checkErr == nil {
 							i.addLog("✅ Node.js 检测成功")
@@ -254,11 +253,11 @@ func (i *Installer) checkNodeJS() error {
 				}
 			}
 		}
-		
+
 		i.addLog("未检测到 Node.js，需要安装")
 		return fmt.Errorf("未安装 Node.js")
 	}
-	
+
 	version := strings.TrimSpace(string(output))
 	i.addLog(fmt.Sprintf("检测到 Node.js: %s", version))
 
@@ -280,7 +279,7 @@ func (i *Installer) validateNodeVersion(version string) error {
 			}
 		}
 	}
-	
+
 	return fmt.Errorf("Node.js 版本过低，需要 v16 或更高版本")
 }
 
@@ -306,7 +305,7 @@ func (i *Installer) installNodeJS() error {
 func (i *Installer) installNodeJSWindows() error {
 	// 首先清理可能存在的残留环境变量
 	i.addLog("清理可能存在的Node.js残留配置...")
-	
+
 	// 检查并清理空的nodejs目录
 	nodejsDir := `C:\Program Files\nodejs`
 	if info, err := os.Stat(nodejsDir); err == nil && info.IsDir() {
@@ -322,13 +321,13 @@ func (i *Installer) installNodeJSWindows() error {
 			}
 		}
 	}
-	
+
 	// 使用批处理脚本下载和安装
 	i.addLog("创建Node.js安装脚本...")
-	
+
 	tempDir := os.TempDir()
 	scriptPath := filepath.Join(tempDir, "install_nodejs.bat")
-	
+
 	// 创建批处理脚本内容
 	scriptContent := `@echo off
 chcp 65001 >nul
@@ -399,26 +398,26 @@ if %ERRORLEVEL% EQU 0 (
 echo Installation script completed
 exit /b 0
 `
-	
+
 	// 写入脚本文件（使用UTF-8编码）
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return fmt.Errorf("创建安装脚本失败: %v", err)
 	}
 	defer os.Remove(scriptPath)
-	
+
 	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
-	
+
 	// 执行批处理脚本
 	cmd := exec.Command("cmd", "/c", scriptPath)
 	cmd.Dir = tempDir
-	
+
 	// 设置输出编码为UTF-8
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	// 获取命令输出
 	output, err := cmd.CombinedOutput()
-	
+
 	// 将输出转换为字符串并逐行添加到日志
 	outputStr := string(output)
 	lines := strings.Split(outputStr, "\n")
@@ -428,30 +427,30 @@ exit /b 0
 			i.addLog(line)
 		}
 	}
-	
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("Node.js 安装失败，退出代码: %d", exitErr.ExitCode())
 		}
 		return fmt.Errorf("Node.js 安装失败: %v", err)
 	}
-	
+
 	// 再次验证安装
 	if err := i.checkNodeJS(); err == nil {
 		i.addLog("✅ Node.js 安装验证成功")
 		return nil
 	}
-	
+
 	// 如果验证失败，但安装脚本成功，说明可能需要重启
 	i.addLog("⚠️ Node.js 已安装，但可能需要重启终端或系统才能生效")
-	
+
 	// 尝试设置临时环境变量
 	possiblePaths := []string{
 		`C:\Program Files\nodejs`,
 		`C:\Program Files (x86)\nodejs`,
 		filepath.Join(os.Getenv("ProgramFiles"), "nodejs"),
 	}
-	
+
 	for _, nodePath := range possiblePaths {
 		nodeExe := filepath.Join(nodePath, "node.exe")
 		if _, err := os.Stat(nodeExe); err == nil {
@@ -460,7 +459,7 @@ exit /b 0
 			break
 		}
 	}
-	
+
 	return nil
 }
 
@@ -534,7 +533,7 @@ func (i *Installer) checkGit() error {
 	// 首先尝试使用 which/where 命令查找 git
 	var lookupCmd string
 	var lookupArgs []string
-	
+
 	if runtime.GOOS == "windows" {
 		lookupCmd = "where"
 		lookupArgs = []string{"git"}
@@ -542,7 +541,7 @@ func (i *Installer) checkGit() error {
 		lookupCmd = "which"
 		lookupArgs = []string{"git"}
 	}
-	
+
 	// 尝试查找 git 命令
 	if lookupOutput, lookupErr := exec.Command(lookupCmd, lookupArgs...).Output(); lookupErr == nil {
 		gitPath := strings.TrimSpace(string(lookupOutput))
@@ -564,11 +563,11 @@ func (i *Installer) checkGit() error {
 	if runtime.GOOS == "darwin" {
 		i.addLog("正在检查 macOS 常见的 Git 安装位置...")
 		commonPaths := []string{
-			"/opt/homebrew/bin/git",      // Apple Silicon Homebrew
-			"/usr/local/bin/git",         // Intel Homebrew
-			"/usr/bin/git",               // 系统默认
+			"/opt/homebrew/bin/git", // Apple Silicon Homebrew
+			"/usr/local/bin/git",    // Intel Homebrew
+			"/usr/bin/git",          // 系统默认
 		}
-		
+
 		for _, path := range commonPaths {
 			if _, err := os.Stat(path); err == nil {
 				i.addLog(fmt.Sprintf("发现 Git 在: %s", path))
@@ -577,7 +576,7 @@ func (i *Installer) checkGit() error {
 				if testOutput, testErr := testCmd.Output(); testErr == nil {
 					version := strings.TrimSpace(string(testOutput))
 					i.addLog(fmt.Sprintf("版本: %s", version))
-					
+
 					// 将目录添加到当前进程的 PATH 中
 					gitDir := filepath.Dir(path)
 					currentPath := os.Getenv("PATH")
@@ -617,10 +616,10 @@ func (i *Installer) installGit() error {
 func (i *Installer) installGitWindows() error {
 	// 使用批处理脚本下载和安装
 	i.addLog("创建Git安装脚本...")
-	
+
 	tempDir := os.TempDir()
 	scriptPath := filepath.Join(tempDir, "install_git.bat")
-	
+
 	// 创建批处理脚本内容
 	scriptContent := `@echo off
 chcp 65001 >nul
@@ -691,26 +690,26 @@ if %ERRORLEVEL% EQU 0 (
 echo Installation script completed
 exit /b 0
 `
-	
+
 	// 写入脚本文件（使用UTF-8编码）
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
 		return fmt.Errorf("创建安装脚本失败: %v", err)
 	}
 	defer os.Remove(scriptPath)
-	
+
 	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
-	
+
 	// 执行批处理脚本
 	cmd := exec.Command("cmd", "/c", scriptPath)
 	cmd.Dir = tempDir
-	
+
 	// 设置输出编码为UTF-8
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	// 获取命令输出
 	output, err := cmd.CombinedOutput()
-	
+
 	// 将输出转换为字符串并逐行添加到日志
 	outputStr := string(output)
 	lines := strings.Split(outputStr, "\n")
@@ -720,30 +719,30 @@ exit /b 0
 			i.addLog(line)
 		}
 	}
-	
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return fmt.Errorf("Git 安装失败，退出代码: %d", exitErr.ExitCode())
 		}
 		return fmt.Errorf("Git 安装失败: %v", err)
 	}
-	
+
 	// 再次验证安装
 	if err := i.checkGit(); err == nil {
 		i.addLog("✅ Git 安装验证成功")
 		return nil
 	}
-	
+
 	// 如果验证失败，但安装脚本成功，说明可能需要重启
 	i.addLog("⚠️ Git 已安装，但可能需要重启终端或系统才能生效")
-	
+
 	// 尝试设置临时环境变量
 	possiblePaths := []string{
 		`C:\Program Files\Git\bin`,
 		`C:\Program Files (x86)\Git\bin`,
 		filepath.Join(os.Getenv("ProgramFiles"), "Git", "bin"),
 	}
-	
+
 	for _, gitPath := range possiblePaths {
 		gitExe := filepath.Join(gitPath, "git.exe")
 		if _, err := os.Stat(gitExe); err == nil {
@@ -752,7 +751,7 @@ exit /b 0
 			break
 		}
 	}
-	
+
 	return nil
 }
 
@@ -842,12 +841,12 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 			// Windows: 设置永久环境变量
 			i.addLog("设置 Windows 永久环境变量...")
 			envVars := map[string]string{
-				"ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic/",
-				"ANTHROPIC_API_KEY": apiKey,
-				"CLAUDE_REQUEST_DELAY_MS": fmt.Sprintf("%d", requestDelay),
+				"ANTHROPIC_BASE_URL":             "https://api.moonshot.cn/anthropic/",
+				"ANTHROPIC_API_KEY":              apiKey,
+				"CLAUDE_REQUEST_DELAY_MS":        fmt.Sprintf("%d", requestDelay),
 				"CLAUDE_MAX_CONCURRENT_REQUESTS": "1",
 			}
-			
+
 			for envVar, value := range envVars {
 				// 设置用户级环境变量（使用 setx）
 				i.addLog(fmt.Sprintf("🔧 执行命令: setx %s \"%s\"", envVar, value))
@@ -865,12 +864,12 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 					}
 				}
 			}
-			
+
 			i.addLog(fmt.Sprintf("永久环境变量已设置（请求延迟: %d毫秒），可能需要重启终端才能生效", requestDelay))
 		} else {
 			// 创建临时批处理脚本设置环境变量
 			i.addLog("正在创建临时环境变量脚本...")
-			
+
 			// 获取临时目录
 			tempDir := os.TempDir()
 			// 使用批处理脚本，更稳定可靠
@@ -905,7 +904,7 @@ echo You can now run 'claude' command with K2 API
 			// 设置永久环境变量
 			shell := os.Getenv("SHELL")
 			shellConfigs := []string{}
-			
+
 			// 根据 shell 类型确定配置文件
 			if strings.Contains(shell, "zsh") {
 				shellConfigs = append(shellConfigs, filepath.Join(home, ".zshrc"))
@@ -922,7 +921,7 @@ echo You can now run 'claude' command with K2 API
 				// 默认使用 .profile
 				shellConfigs = append(shellConfigs, filepath.Join(home, ".profile"))
 			}
-			
+
 			// 对每个配置文件进行处理
 			for _, shellConfig := range shellConfigs {
 				envConfig := fmt.Sprintf(`
@@ -939,14 +938,14 @@ unset ANTHROPIC_AUTH_TOKEN
 					// 文件不存在，跳过
 					continue
 				}
-				
+
 				// 检查配置是否已存在
 				existingData, err := os.ReadFile(shellConfig)
 				if err != nil {
 					i.addLog(fmt.Sprintf("⚠️ 读取 %s 失败: %v", shellConfig, err))
 					continue
 				}
-				
+
 				if strings.Contains(string(existingData), "# Claude Code K2 Configuration") {
 					i.addLog(fmt.Sprintf("⚠️ %s 中已存在配置，跳过", shellConfig))
 					continue
@@ -958,22 +957,22 @@ unset ANTHROPIC_AUTH_TOKEN
 					i.addLog(fmt.Sprintf("⚠️ 无法打开 %s: %v", shellConfig, err))
 					continue
 				}
-				
+
 				_, err = f.WriteString(envConfig)
 				f.Close()
-				
+
 				if err != nil {
 					i.addLog(fmt.Sprintf("⚠️ 写入 %s 失败: %v", shellConfig, err))
 				} else {
 					i.addLog(fmt.Sprintf("✅ 永久环境变量已添加到 %s", shellConfig))
 				}
 			}
-			
+
 			i.addLog(fmt.Sprintf("永久环境变量已设置（请求延迟: %d毫秒），请重新打开终端或运行 source 命令生效", requestDelay))
 		} else {
 			// 创建临时脚本设置环境变量
 			i.addLog("正在创建临时环境变量脚本...")
-			
+
 			// 创建临时脚本文件
 			scriptPath := "/tmp/claude_k2_setup.sh"
 			scriptContent := fmt.Sprintf(`#!/bin/bash
@@ -1005,12 +1004,12 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 	// 处理 .claude.json 文件
 	claudeJsonPath := filepath.Join(home, ".claude.json")
 	backupPath := claudeJsonPath + ".backup"
-	
+
 	i.addLog(fmt.Sprintf("🔍 处理配置文件: %s", claudeJsonPath))
-	
+
 	// 读取或创建 .claude.json 配置
 	config := make(map[string]interface{})
-	
+
 	// 尝试读取现有配置
 	if data, err := os.ReadFile(claudeJsonPath); err == nil {
 		i.addLog("📖 读取现有配置文件...")
@@ -1029,14 +1028,14 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 	} else {
 		i.addLog("📄 创建新的配置文件...")
 	}
-	
+
 	// 添加/更新K2配置
 	config["hasCompletedOnboarding"] = true
 	config["apiKey"] = apiKey
 	config["apiBaseUrl"] = "https://api.moonshot.cn/anthropic/"
 	config["requestDelayMs"] = requestDelay
 	config["maxConcurrentRequests"] = 1
-	
+
 	// 写回配置文件
 	if jsonData, err := json.MarshalIndent(config, "", "  "); err != nil {
 		i.addLog(fmt.Sprintf("⚠️ 序列化配置失败: %v", err))
@@ -1049,7 +1048,6 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 		}
 	}
 
-
 	i.addLog("K2 API 配置完成")
 	return nil
 }
@@ -1057,7 +1055,7 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 // forceCreateClaudeConfig 强制创建Claude配置文件
 func (i *Installer) forceCreateClaudeConfig(filePath, content string) {
 	i.addLog("💪 尝试强制创建配置文件...")
-	
+
 	// 方法1: 直接写入
 	if err := os.WriteFile(filePath, []byte(content), 0644); err == nil {
 		i.addLog("✅ 方法1成功: 直接写入")
@@ -1065,7 +1063,7 @@ func (i *Installer) forceCreateClaudeConfig(filePath, content string) {
 	} else {
 		i.addLog(fmt.Sprintf("⚠️ 方法1失败: %v", err))
 	}
-	
+
 	// 方法2: 尝试更宽松的权限
 	if err := os.WriteFile(filePath, []byte(content), 0666); err == nil {
 		i.addLog("✅ 方法2成功: 宽松权限写入")
@@ -1073,7 +1071,7 @@ func (i *Installer) forceCreateClaudeConfig(filePath, content string) {
 	} else {
 		i.addLog(fmt.Sprintf("⚠️ 方法2失败: %v", err))
 	}
-	
+
 	// 方法3: 创建文件后写入
 	if file, err := os.Create(filePath); err == nil {
 		defer file.Close()
@@ -1086,7 +1084,7 @@ func (i *Installer) forceCreateClaudeConfig(filePath, content string) {
 	} else {
 		i.addLog(fmt.Sprintf("⚠️ 方法3创建失败: %v", err))
 	}
-	
+
 	i.addLog("❌ 所有方法都失败了，配置文件创建失败")
 }
 
@@ -1130,24 +1128,24 @@ func (i *Installer) downloadFile(url, filepath string) error {
 			ResponseHeaderTimeout: 10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 			// 空闲连接设置
-			IdleConnTimeout:       90 * time.Second,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:     90 * time.Second,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
 		},
 	}
-	
+
 	// 创建请求
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
 	}
-	
+
 	// 设置用户代理，避免被某些服务器拒绝
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	
+
 	i.addLog(fmt.Sprintf("开始下载: %s", url))
 	i.addLog("连接服务器...")
-	
+
 	// 发送请求
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1157,7 +1155,7 @@ func (i *Installer) downloadFile(url, filepath string) error {
 		return fmt.Errorf("连接失败: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// 检查响应状态
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("下载失败，HTTP状态码: %d", resp.StatusCode)
@@ -1192,14 +1190,14 @@ func (i *Installer) downloadFile(url, filepath string) error {
 	// 使用缓冲复制，提高性能
 	buf := make([]byte, 64*1024) // 64KB 缓冲区（增大缓冲区）
 	_, err = io.CopyBuffer(out, progressReader, buf)
-	
+
 	if err != nil {
 		if err == io.ErrUnexpectedEOF {
 			return fmt.Errorf("下载中断，文件不完整")
 		}
 		return fmt.Errorf("下载失败: %v", err)
 	}
-	
+
 	i.addLog("✅ 下载完成")
 	return nil
 }
@@ -1207,14 +1205,14 @@ func (i *Installer) downloadFile(url, filepath string) error {
 // progressReader 包装 io.Reader 以报告下载进度
 type progressReader struct {
 	io.Reader
-	Total          int64
-	Current        int64
-	LastLog        time.Time
-	LastRead       time.Time
-	LastBytes      int64     // 上次记录时的字节数
-	StartTime      time.Time // 下载开始时间
-	Installer      *Installer
-	ReadTimeout    time.Duration
+	Total       int64
+	Current     int64
+	LastLog     time.Time
+	LastRead    time.Time
+	LastBytes   int64     // 上次记录时的字节数
+	StartTime   time.Time // 下载开始时间
+	Installer   *Installer
+	ReadTimeout time.Duration
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
@@ -1223,31 +1221,31 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 		pr.StartTime = time.Now()
 		pr.LastBytes = 0
 	}
-	
+
 	// 检查读取超时
 	if time.Since(pr.LastRead) > pr.ReadTimeout && pr.Current > 0 {
 		return 0, fmt.Errorf("下载停滞：超过%d秒没有新数据", int(pr.ReadTimeout.Seconds()))
 	}
-	
+
 	n, err := pr.Reader.Read(p)
 	if n > 0 {
 		pr.Current += int64(n)
 		pr.LastRead = time.Now() // 更新最后读取时间
 	}
-	
+
 	// 每秒更新一次进度
 	if time.Since(pr.LastLog) >= time.Second {
 		if pr.Total > 0 {
 			percent := float64(pr.Current) * 100 / float64(pr.Total)
-			
+
 			// 计算瞬时速度（最近1秒的速度）
 			bytesInLastSecond := pr.Current - pr.LastBytes
 			instantSpeed := float64(bytesInLastSecond) / 1024 / 1024 // MB/s
-			
+
 			// 计算平均速度
 			totalElapsed := time.Since(pr.StartTime).Seconds()
 			avgSpeed := float64(pr.Current) / totalElapsed / 1024 / 1024 // MB/s
-			
+
 			// 使用平均速度预估剩余时间（更稳定）
 			remaining := pr.Total - pr.Current
 			var etaStr string
@@ -1263,10 +1261,10 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 			} else {
 				etaStr = "计算中..."
 			}
-			
-			pr.Installer.addLog(fmt.Sprintf("下载进度: %.1f%% (%.2f/%.2f MB) 速度: %.2f MB/s 剩余: %s", 
-				percent, 
-				float64(pr.Current)/1024/1024, 
+
+			pr.Installer.addLog(fmt.Sprintf("下载进度: %.1f%% (%.2f/%.2f MB) 速度: %.2f MB/s 剩余: %s",
+				percent,
+				float64(pr.Current)/1024/1024,
 				float64(pr.Total)/1024/1024,
 				instantSpeed,
 				etaStr))
@@ -1276,7 +1274,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 		pr.LastBytes = pr.Current
 		pr.LastLog = time.Now()
 	}
-	
+
 	return n, err
 }
 
@@ -1336,7 +1334,7 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 	}
 
 	i.addLog("开始恢复 Claude Code 原始配置...")
-	
+
 	// 删除 .claude.json 文件
 	claudeJsonPath := filepath.Join(home, ".claude.json")
 	if _, err := os.Stat(claudeJsonPath); err == nil {
@@ -1347,7 +1345,7 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 			i.addLog("✅ 已删除 .claude.json")
 		}
 	}
-	
+
 	// 删除 ~/.claude/settings.json 文件
 	claudeDir := filepath.Join(home, ".claude")
 	settingsPath := filepath.Join(claudeDir, "settings.json")
@@ -1370,23 +1368,23 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 		// Mac/Linux: 删除环境变量配置
 		shell := os.Getenv("SHELL")
 		shellConfigs := []string{}
-		
+
 		// 根据 shell 类型确定配置文件
 		if strings.Contains(shell, "zsh") {
 			shellConfigs = append(shellConfigs, filepath.Join(home, ".zshrc"))
 		} else if strings.Contains(shell, "bash") {
 			// bash 可能使用多个配置文件
-			shellConfigs = append(shellConfigs, 
+			shellConfigs = append(shellConfigs,
 				filepath.Join(home, ".bashrc"),
 				filepath.Join(home, ".bash_profile"),
 			)
 		} else if strings.Contains(shell, "fish") {
 			shellConfigs = append(shellConfigs, filepath.Join(home, ".config/fish/config.fish"))
 		}
-		
+
 		// 总是检查 .profile 作为后备
 		shellConfigs = append(shellConfigs, filepath.Join(home, ".profile"))
-		
+
 		// 清理所有找到的配置文件
 		for _, shellConfig := range shellConfigs {
 			if _, err := os.Stat(shellConfig); err != nil {
@@ -1445,7 +1443,7 @@ func (i *Installer) RestoreOriginalClaudeConfig() error {
 func (i *Installer) createWindowsRestoreScript() {
 	tempDir := os.TempDir()
 	scriptPath := filepath.Join(tempDir, "claude_restore.ps1")
-	
+
 	scriptContent := `# Claude Code 环境变量清理脚本
 $envVars = @(
     "ANTHROPIC_BASE_URL",
@@ -1498,9 +1496,9 @@ Write-Host "请重启命令行窗口以确保环境变量生效" -ForegroundColo
 		i.addLog(fmt.Sprintf("⚠️ 创建恢复脚本失败: %v", err))
 		return
 	}
-	
+
 	i.addLog(fmt.Sprintf("📝 已创建恢复脚本: %s", scriptPath))
-	
+
 	// 执行PowerShell脚本
 	cmd := exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	output, err := cmd.CombinedOutput()
@@ -1513,7 +1511,7 @@ Write-Host "请重启命令行窗口以确保环境变量生效" -ForegroundColo
 			i.addLog(fmt.Sprintf("脚本输出: %s", string(output)))
 		}
 	}
-	
+
 	// 清理脚本文件
 	os.Remove(scriptPath)
 }
