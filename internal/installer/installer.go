@@ -613,19 +613,19 @@ func (i *Installer) configureK2APIWithOptions(apiKey string, rpm string, useSyst
 			// 使用批处理脚本，更稳定可靠
 			scriptPath := filepath.Join(tempDir, "claude_k2_setup.bat")
 			scriptContent := fmt.Sprintf(`@echo off
-REM Claude Code K2 临时环境变量设置脚本
+REM Claude Code K2 Environment Variables Setup Script
 set "ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic/"
 set "ANTHROPIC_API_KEY=%s"
 set "CLAUDE_REQUEST_DELAY_MS=%d"
 set "CLAUDE_MAX_CONCURRENT_REQUESTS=1"
 set "ANTHROPIC_AUTH_TOKEN="
 
-echo ✅ K2环境变量已设置：
+echo K2 Environment Variables Set:
 echo   - API Key: %s...
 echo   - Base URL: https://api.moonshot.cn/anthropic/
-echo   - 请求延迟: %d毫秒
+echo   - Request Delay: %d ms
 echo.
-echo 现在可以运行 'claude' 命令使用K2 API
+echo You can now run 'claude' command with K2 API
 `, apiKey, requestDelay, apiKey[:10], requestDelay)
 
 			err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)

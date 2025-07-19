@@ -507,9 +507,9 @@ func (m *Manager) openClaudeCode() {
 			// 创建一个批处理脚本来启动Claude，避免PowerShell执行策略问题
 			refreshScript := filepath.Join(tempDir, "claude_start.bat")
 			refreshContent := `@echo off
-echo 正在启动 Claude Code (永久环境变量模式)...
+echo Starting Claude Code (Permanent Environment Variables Mode)...
 echo.
-rem 通过重新打开注册表来刷新环境变量
+rem Refresh environment variables from registry
 for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v ANTHROPIC_API_KEY 2^>nul') do set "ANTHROPIC_API_KEY=%%B"
 for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v ANTHROPIC_BASE_URL 2^>nul') do set "ANTHROPIC_BASE_URL=%%B"
 for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v CLAUDE_REQUEST_DELAY_MS 2^>nul') do set "CLAUDE_REQUEST_DELAY_MS=%%B"
@@ -517,14 +517,14 @@ for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v CLAUDE_MAX_CONCURREN
 set "ANTHROPIC_AUTH_TOKEN="
 
 if defined ANTHROPIC_API_KEY (
-    echo ✅ 检测到K2环境变量配置
+    echo K2 Environment Variables Detected
     echo    API Key: %ANTHROPIC_API_KEY:~0,10%...
     echo    Base URL: %ANTHROPIC_BASE_URL%
 ) else (
-    echo ⚠️ 未检测到K2环境变量，请检查安装
+    echo Warning: K2 environment variables not found
 )
 echo.
-echo 启动 Claude Code...
+echo Launching Claude Code...
 claude
 `
 			os.WriteFile(refreshScript, []byte(refreshContent), 0755)
@@ -535,7 +535,11 @@ claude
 				// 创建包装脚本避免引号问题
 				wrapperScript := filepath.Join(tempDir, "claude_wrapper.bat")
 				wrapperContent := fmt.Sprintf(`@echo off
+echo Starting Claude Code with K2 API...
+echo.
 call "%s"
+echo.
+echo Launching Claude Code...
 claude
 `, setupScript)
 				os.WriteFile(wrapperScript, []byte(wrapperContent), 0755)
