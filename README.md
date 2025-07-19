@@ -7,7 +7,6 @@
 - 🚀 **一键安装**：自动检测并安装所有必需组件
 - 🔧 **智能配置**：自动配置环境变量和 API 设置
 - 📚 **引导教程**：内置详细的使用教程
-- 🔐 **激活保护**：本地算法激活码验证
 - 🖥️ **跨平台支持**：支持 Windows、macOS 和 Linux
 
 ## 系统要求
@@ -28,21 +27,9 @@
 
 ### 2. 运行程序
 
-解压后双击运行程序，首次运行需要输入激活码。
+解压后双击运行程序。
 
-### 3. 获取激活码
-
-使用激活码生成器生成有效激活码：
-
-```bash
-cd cmd/keygen
-go build -o keygen
-./keygen 5  # 生成5个激活码
-```
-
-或联系管理员获取激活码。
-
-### 4. 配置 K2 API
+### 3. 配置 K2 API
 
 1. 访问 [Kimi 平台](https://platform.moonshot.cn/console/account)
 2. 注册并充值至少 50 元
@@ -87,17 +74,12 @@ go mod download
 claude-k2-installer/
 ├── main.go                 # 主程序入口
 ├── internal/
-│   ├── activation/        # 激活码验证模块
 │   ├── installer/         # 安装器核心逻辑
 │   └── ui/               # 用户界面组件
 ├── go.mod                # Go 模块定义
 ├── build.sh              # 构建脚本
 └── README.md             # 本文件
 ```
-
-### 激活码算法
-
-本项目使用本地算法验证激活码，算法细节请查看 `internal/activation/activation.go`。
 
 ## 常见问题
 
@@ -129,4 +111,14 @@ MIT License
 
 ## 联系方式
 
-如有问题，请在 GitHub 上提交 Issue。
+### AI 学习交流群
+
+欢迎扫码加入 AI 学习交流群，分享最新 AI 知识，一起学习进步！
+
+![AI学习交流群](contact_me_qr.png)
+
+微信号：ruan11223344
+
+### 问题反馈
+
+如有技术问题，请在 GitHub 上提交 Issue。
