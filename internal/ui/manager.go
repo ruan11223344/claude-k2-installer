@@ -75,9 +75,9 @@ func (m *Manager) CreateMainContent() fyne.CanvasObject {
 	subtitle.Alignment = fyne.TextAlignCenter
 
 	// 添加作者信息 - 可点击复制的微信号
-	wechatBtn := widget.NewButton("🤖 加微信: ruan11223344 分享最新AI知识，一起学习进步 (点击复制)", func() {
+	wechatBtn := widget.NewButton("🤖 加微信: ruan11223344 进群分享最新AI知识，一起学习进步 (点击复制)", func() {
 		m.window.Clipboard().SetContent("ruan11223344")
-		dialog.ShowInformation("复制成功", "微信号 ruan11223344 已复制到剪贴板", m.window)
+		m.showQRCodeDialog()
 	})
 	wechatBtn.Importance = widget.HighImportance
 
@@ -107,7 +107,7 @@ func (m *Manager) createInstallerContent() fyne.CanvasObject {
 	m.logsDisplay.SetPlaceHolder("安装日志将显示在这里...")
 
 	logScroll := container.NewScroll(m.logsDisplay)
-	logScroll.SetMinSize(fyne.NewSize(0, 200))
+	logScroll.SetMinSize(fyne.NewSize(0, 500))
 
 	// API Key 输入
 	m.apiKeyEntry = widget.NewPasswordEntry()
@@ -231,8 +231,10 @@ func (m *Manager) createInstallerContent() fyne.CanvasObject {
 		),
 	)
 
-	// 左右分栏布局
-	return container.NewHSplit(leftPanel, rightPanel)
+	// 左右分栏布局 - 左边60%，右边40%
+	split := container.NewHSplit(leftPanel, rightPanel)
+	split.SetOffset(0.65) // 左侧60%，右侧40%
+	return split
 }
 
 func (m *Manager) createStepsCard() fyne.CanvasObject {
@@ -486,38 +488,56 @@ func (m *Manager) restoreClaudeConfig() {
 
 // openClaudeCode 打开 Claude Code
 func (m *Manager) openClaudeCode() {
-	// 根据操作系统检查相应的设置脚本
+	// 根据操作系统和永久设置选项启动 Claude Code
 	var setupScript string
 	var cmd *exec.Cmd
 
+	// 检查是否勾选了永久设置
+	useSystemConfig := m.systemConfigCheck != nil && m.systemConfigCheck.Checked
+
 	switch runtime.GOOS {
 	case "windows":
-		// Windows: 检查批处理脚本
+		// Windows: 根据永久设置决定启动方式
 		tempDir := os.TempDir()
 		setupScript = filepath.Join(tempDir, "claude_k2_setup.bat")
-		
-		if _, err := os.Stat(setupScript); err == nil {
-			// 有设置脚本，先运行设置再启动claude
-			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\" && claude", setupScript))
-		} else {
+
+		if useSystemConfig {
+			// 勾选了永久设置：删除临时脚本，使用永久环境变量
+			os.Remove(setupScript)
 			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
+		} else {
+			// 未勾选永久设置：使用临时脚本（如果存在）
+			if _, err := os.Stat(setupScript); err == nil {
+				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\" && claude", setupScript))
+			} else {
+				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
+			}
 		}
 	case "darwin":
-		// macOS: 检查bash脚本
+		// macOS: 根据永久设置决定启动方式
 		setupScript = "/tmp/claude_k2_setup.sh"
-		
+
 		var script string
-		if _, err := os.Stat(setupScript); err == nil {
-			// 有设置脚本，先运行设置再启动claude
-			script = fmt.Sprintf(`tell application "Terminal"
-				do script "source %s && claude"
-				activate
-			end tell`, setupScript)
-		} else {
+		if useSystemConfig {
+			// 勾选了永久设置：删除临时脚本，使用永久环境变量
+			os.Remove(setupScript)
 			script = `tell application "Terminal"
 				do script "claude"
 				activate
 			end tell`
+		} else {
+			// 未勾选永久设置：使用临时脚本（如果存在）
+			if _, err := os.Stat(setupScript); err == nil {
+				script = fmt.Sprintf(`tell application "Terminal"
+				do script "source %s && claude"
+				activate
+			end tell`, setupScript)
+			} else {
+				script = `tell application "Terminal"
+				do script "claude"
+				activate
+			end tell`
+			}
 		}
 		cmd = exec.Command("osascript", "-e", script)
 	}
@@ -534,4 +554,31 @@ func (m *Manager) openClaudeCode() {
 		// 这种情况不应该发生在Windows和Mac上
 		dialog.ShowError(fmt.Errorf("不支持的操作系统或无法启动终端"), m.window)
 	}
+}
+
+// showQRCodeDialog 显示包含二维码的对话框
+func (m *Manager) showQRCodeDialog() {
+	// 使用嵌入的二维码图片资源
+	qrImage := canvas.NewImageFromResource(QRCodeResource)
+	qrImage.FillMode = canvas.ImageFillContain
+	qrImage.SetMinSize(fyne.NewSize(200, 200))
+
+	// 创建文本内容
+	title := widget.NewRichTextFromMarkdown("## 微信号已复制到剪贴板\n")
+	title.Wrapping = fyne.TextWrapWord
+
+	content := widget.NewRichTextFromMarkdown("**微信号**: ruan11223344\n\n可以扫描二维码直接进群，或搜索微信号添加好友\n进群分享最新AI知识，一起学习进步！")
+	content.Wrapping = fyne.TextWrapWord
+
+	// 创建左右布局容器 - 左边60%图片，右边40%文字
+	leftContainer := container.NewVBox(qrImage)
+	rightContainer := container.NewVBox(title, content)
+
+	contentContainer := container.NewHSplit(leftContainer, rightContainer)
+	contentContainer.SetOffset(0.6) // 左侧(图片)60%，右侧(文字)40%
+
+	// 显示自定义对话框
+	customDialog := dialog.NewCustom("加微信进群", "关闭", contentContainer, m.window)
+	customDialog.Resize(fyne.NewSize(300, 400))
+	customDialog.Show()
 }

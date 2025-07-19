@@ -172,8 +172,21 @@ func (i *Installer) checkNodeJS() error {
 					// 尝试运行找到的 node
 					testCmd := exec.Command(path, "--version")
 					if testOutput, testErr := testCmd.Output(); testErr == nil {
-						i.addLog(fmt.Sprintf("版本: %s", string(testOutput)))
-						i.addLog("提示：请将该路径添加到 PATH 环境变量中")
+						version := strings.TrimSpace(string(testOutput))
+						i.addLog(fmt.Sprintf("版本: %s", version))
+						
+						// 将目录添加到当前进程的 PATH 中
+						nodeDir := filepath.Dir(path)
+						currentPath := os.Getenv("PATH")
+						newPath := nodeDir + ":" + currentPath
+						os.Setenv("PATH", newPath)
+						i.addLog(fmt.Sprintf("已将 %s 添加到 PATH 环境变量", nodeDir))
+						
+						// 重新检查版本
+						if checkErr := i.validateNodeVersion(version); checkErr == nil {
+							i.addLog("✅ Node.js 检测成功")
+							return nil
+						}
 					}
 				}
 			}
@@ -186,6 +199,11 @@ func (i *Installer) checkNodeJS() error {
 	version := strings.TrimSpace(string(output))
 	i.addLog(fmt.Sprintf("检测到 Node.js: %s", version))
 
+	return i.validateNodeVersion(version)
+}
+
+// validateNodeVersion 验证Node.js版本是否满足要求
+func (i *Installer) validateNodeVersion(version string) error {
 	// 检查版本是否满足要求 - 提取主版本号
 	// 版本格式通常是 v16.14.0 或 v20.10.0
 	if strings.HasPrefix(version, "v") {
@@ -199,7 +217,7 @@ func (i *Installer) checkNodeJS() error {
 			}
 		}
 	}
-
+	
 	return fmt.Errorf("Node.js 版本过低，需要 v16 或更高版本")
 }
 
@@ -346,6 +364,26 @@ func (i *Installer) installNodeJSLinux() error {
 }
 
 func (i *Installer) checkGit() error {
+	// 首先尝试使用 which/where 命令查找 git
+	var lookupCmd string
+	var lookupArgs []string
+	
+	if runtime.GOOS == "windows" {
+		lookupCmd = "where"
+		lookupArgs = []string{"git"}
+	} else {
+		lookupCmd = "which"
+		lookupArgs = []string{"git"}
+	}
+	
+	// 尝试查找 git 命令
+	if lookupOutput, lookupErr := exec.Command(lookupCmd, lookupArgs...).Output(); lookupErr == nil {
+		gitPath := strings.TrimSpace(string(lookupOutput))
+		if gitPath != "" {
+			i.addLog(fmt.Sprintf("找到 Git 在: %s", gitPath))
+		}
+	}
+
 	cmd := exec.Command("git", "--version")
 	output, err := cmd.Output()
 
@@ -353,6 +391,37 @@ func (i *Installer) checkGit() error {
 		version := strings.TrimSpace(string(output))
 		i.addLog(fmt.Sprintf("检测到 Git: %s", version))
 		return nil
+	}
+
+	// macOS 特殊处理：检查常见的安装位置
+	if runtime.GOOS == "darwin" {
+		i.addLog("正在检查 macOS 常见的 Git 安装位置...")
+		commonPaths := []string{
+			"/opt/homebrew/bin/git",      // Apple Silicon Homebrew
+			"/usr/local/bin/git",         // Intel Homebrew
+			"/usr/bin/git",               // 系统默认
+		}
+		
+		for _, path := range commonPaths {
+			if _, err := os.Stat(path); err == nil {
+				i.addLog(fmt.Sprintf("发现 Git 在: %s", path))
+				// 尝试运行找到的 git
+				testCmd := exec.Command(path, "--version")
+				if testOutput, testErr := testCmd.Output(); testErr == nil {
+					version := strings.TrimSpace(string(testOutput))
+					i.addLog(fmt.Sprintf("版本: %s", version))
+					
+					// 将目录添加到当前进程的 PATH 中
+					gitDir := filepath.Dir(path)
+					currentPath := os.Getenv("PATH")
+					newPath := gitDir + ":" + currentPath
+					os.Setenv("PATH", newPath)
+					i.addLog(fmt.Sprintf("已将 %s 添加到 PATH 环境变量", gitDir))
+					i.addLog("✅ Git 检测成功")
+					return nil
+				}
+			}
+		}
 	}
 
 	i.addLog("未检测到 Git，需要安装")
