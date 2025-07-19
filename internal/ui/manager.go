@@ -504,26 +504,35 @@ func (m *Manager) openClaudeCode() {
 		if useSystemConfig {
 			// 勾选了永久设置：删除临时脚本，使用PowerShell重新加载环境变量
 			os.Remove(setupScript)
-			// 使用PowerShell重新加载环境变量并启动Claude
-			psScript := fmt.Sprintf(`
-				Write-Host "正在重新加载环境变量..." -ForegroundColor Yellow
-				# 刷新当前进程的环境变量
-				foreach($level in "Machine","User") {
-					[Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
-						if($_.Name.StartsWith("ANTHROPIC") -or $_.Name.StartsWith("CLAUDE")) {
-							[Environment]::SetEnvironmentVariable($_.Name, $_.Value, "Process")
-						}
-					}
-				}
-				Write-Host "✅ 环境变量已刷新" -ForegroundColor Green
-				Write-Host "启动 Claude Code..." -ForegroundColor Cyan
-				claude
-			`)
-			cmd = exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", psScript)
+			// 创建一个批处理脚本来启动Claude，避免PowerShell执行策略问题
+			refreshScript := filepath.Join(tempDir, "claude_start.bat")
+			refreshContent := `@echo off
+echo 正在启动 Claude Code (永久环境变量模式)...
+echo.
+rem 通过重新打开注册表来刷新环境变量
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v ANTHROPIC_API_KEY 2^>nul') do set "ANTHROPIC_API_KEY=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v ANTHROPIC_BASE_URL 2^>nul') do set "ANTHROPIC_BASE_URL=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v CLAUDE_REQUEST_DELAY_MS 2^>nul') do set "CLAUDE_REQUEST_DELAY_MS=%%B"
+for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v CLAUDE_MAX_CONCURRENT_REQUESTS 2^>nul') do set "CLAUDE_MAX_CONCURRENT_REQUESTS=%%B"
+set "ANTHROPIC_AUTH_TOKEN="
+
+if defined ANTHROPIC_API_KEY (
+    echo ✅ 检测到K2环境变量配置
+    echo    API Key: %ANTHROPIC_API_KEY:~0,10%...
+    echo    Base URL: %ANTHROPIC_BASE_URL%
+) else (
+    echo ⚠️ 未检测到K2环境变量，请检查安装
+)
+echo.
+echo 启动 Claude Code...
+claude
+`
+			os.WriteFile(refreshScript, []byte(refreshContent), 0755)
+			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\"", refreshScript))
 		} else {
 			// 未勾选永久设置：使用临时脚本（如果存在）
 			if _, err := os.Stat(setupScript); err == nil {
-				cmd = exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", fmt.Sprintf("& '%s'; claude", setupScript))
+				cmd = exec.Command("cmd", "/c", "start", "powershell", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", fmt.Sprintf("& '%s'; claude", setupScript))
 			} else {
 				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
 			}
