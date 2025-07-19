@@ -391,7 +391,7 @@ echo Installation completed
 del /f /q "%INSTALLER_PATH%" 2>nul
 
 echo [STEP 4] Verifying installation...
-timeout /t 2 /nobreak >nul
+ping 127.0.0.1 -n 3 >nul
 
 where node >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
@@ -479,40 +479,302 @@ func (i *Installer) installNodeJSMac() error {
 	// 检查是否有 Homebrew
 	cmd := exec.Command("brew", "--version")
 	if err := cmd.Run(); err != nil {
-		i.addLog("未检测到 Homebrew，尝试下载安装包...")
-		return i.installNodeJSMacPkg()
+		i.addLog("未检测到 Homebrew，尝试自动安装...")
+		
+		// 尝试自动安装 Homebrew
+		if err := i.installHomebrewCN(); err != nil {
+			i.addLog(fmt.Sprintf("Homebrew 安装失败: %v", err))
+			i.addLog("将尝试直接下载 Node.js 安装包...")
+			return i.installNodeJSMacPkg()
+		}
+		
+		// 重新检查 Homebrew 是否安装成功
+		cmd = exec.Command("brew", "--version")
+		if err := cmd.Run(); err != nil {
+			i.addLog("Homebrew 安装后仍无法使用，尝试直接下载安装包...")
+			return i.installNodeJSMacPkg()
+		}
 	}
 
-	i.addLog("使用 Homebrew 安装 Node.js...")
-	cmd = exec.Command("brew", "install", "node")
+	i.addLog("配置 Homebrew 使用中国镜像源并安装 Node.js...")
+	
+	// 创建配置脚本
+	tempDir := os.TempDir()
+	brewScriptPath := filepath.Join(tempDir, "brew_install_nodejs.sh")
+	
+	brewScript := `#!/bin/bash
+# 保存用户原有的 Homebrew 配置
+OLD_HOMEBREW_BREW_GIT_REMOTE="$HOMEBREW_BREW_GIT_REMOTE"
+OLD_HOMEBREW_CORE_GIT_REMOTE="$HOMEBREW_CORE_GIT_REMOTE"
+OLD_HOMEBREW_BOTTLE_DOMAIN="$HOMEBREW_BOTTLE_DOMAIN"
 
+# 检查是否已经配置了镜像源
+if [[ -n "$HOMEBREW_BOTTLE_DOMAIN" ]]; then
+    echo "检测到已配置 Homebrew 镜像源: $HOMEBREW_BOTTLE_DOMAIN"
+    echo "将使用现有配置..."
+else
+    # 只有在没有配置的情况下才设置镜像源
+    echo "配置 Homebrew 使用中国科技大学镜像源..."
+    export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.ustc.edu.cn/brew.git"
+    export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.ustc.edu.cn/homebrew-core.git"
+    export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles"
+    echo "HOMEBREW_BOTTLE_DOMAIN=$HOMEBREW_BOTTLE_DOMAIN"
+fi
+
+# 更新并安装 Node.js
+echo "更新 Homebrew..."
+brew update || echo "更新失败，继续尝试安装..."
+
+echo "安装 Node.js..."
+brew install node
+
+# 验证安装
+if node --version >/dev/null 2>&1; then
+    NODE_VERSION=$(node --version)
+    echo "Node.js installed successfully: $NODE_VERSION"
+    exit 0
+else
+    echo "Node.js installation may have failed"
+    exit 1
+fi
+`
+	
+	err := os.WriteFile(brewScriptPath, []byte(brewScript), 0755)
+	if err != nil {
+		return fmt.Errorf("创建 Homebrew 脚本失败: %v", err)
+	}
+	defer os.Remove(brewScriptPath)
+	
+	cmd = exec.Command("bash", brewScriptPath)
+	cmd.Dir = tempDir
+	
 	// 使用流式执行避免UI卡住
-	return i.executeCommandWithStreaming(cmd)
+	if err := i.executeCommandWithStreaming(cmd); err != nil {
+		i.addLog("Homebrew 安装失败，尝试直接下载安装包...")
+		return i.installNodeJSMacPkg()
+	}
+	
+	return nil
+}
+
+// installHomebrewCN 使用国内镜像安装 Homebrew
+func (i *Installer) installHomebrewCN() error {
+	i.addLog("准备安装 Homebrew（使用国内镜像）...")
+	
+	tempDir := os.TempDir()
+	scriptPath := filepath.Join(tempDir, "install_homebrew_cn.sh")
+	
+	// 创建安装脚本
+	scriptContent := `#!/bin/bash
+set -e
+
+echo "======================================="
+echo "开始安装 Homebrew（国内镜像加速）"
+echo "======================================="
+
+# 检查是否已经安装
+if command -v brew >/dev/null 2>&1; then
+    echo "Homebrew 已经安装"
+    brew --version
+    exit 0
+fi
+
+echo ""
+echo "正在下载并执行 Homebrew 国内安装脚本..."
+echo "安装过程中可能需要输入您的密码"
+echo ""
+
+# 使用国内镜像安装脚本
+export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.ustc.edu.cn/brew.git"
+export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.ustc.edu.cn/homebrew-core.git"
+export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles"
+
+# 下载并执行安装脚本
+if ! /bin/bash -c "$(curl -fsSL https://gitee.com/cunkai/HomebrewCN/raw/master/Homebrew.sh)"; then
+    echo "ERROR: Homebrew 安装失败"
+    exit 1
+fi
+
+# 验证安装
+if command -v brew >/dev/null 2>&1; then
+    echo ""
+    echo "Homebrew 安装成功！"
+    brew --version
+    exit 0
+else
+    # 尝试添加到 PATH
+    if [ -f "/opt/homebrew/bin/brew" ]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        echo "Homebrew 已安装到 /opt/homebrew"
+    elif [ -f "/usr/local/bin/brew" ]; then
+        eval "$(/usr/local/bin/brew shellenv)"
+        echo "Homebrew 已安装到 /usr/local"
+    fi
+    
+    # 再次验证
+    if command -v brew >/dev/null 2>&1; then
+        echo "Homebrew 安装成功！"
+        brew --version
+        exit 0
+    else
+        echo "WARNING: Homebrew 已安装但未添加到 PATH"
+        echo "请重启终端或手动配置 PATH"
+        exit 1
+    fi
+fi
+`
+
+	// 写入脚本文件
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	if err != nil {
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+
+	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
+	i.addLog("提示：安装过程中需要输入您的密码")
+
+	// 使用流式执行
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = tempDir
+	
+	// 设置环境变量
+	cmd.Env = append(os.Environ(),
+		"HOMEBREW_BREW_GIT_REMOTE=https://mirrors.ustc.edu.cn/brew.git",
+		"HOMEBREW_CORE_GIT_REMOTE=https://mirrors.ustc.edu.cn/homebrew-core.git",
+		"HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles",
+	)
+
+	err = i.executeCommandWithStreaming(cmd)
+	if err != nil {
+		return fmt.Errorf("Homebrew 安装失败: %v", err)
+	}
+
+	// 尝试设置 PATH（针对 Apple Silicon Mac）
+	if _, err := os.Stat("/opt/homebrew/bin/brew"); err == nil {
+		os.Setenv("PATH", fmt.Sprintf("/opt/homebrew/bin:%s", os.Getenv("PATH")))
+		i.addLog("已添加 /opt/homebrew/bin 到 PATH")
+	} else if _, err := os.Stat("/usr/local/bin/brew"); err == nil {
+		os.Setenv("PATH", fmt.Sprintf("/usr/local/bin:%s", os.Getenv("PATH")))
+		i.addLog("已添加 /usr/local/bin 到 PATH")
+	}
+
+	i.addLog("✅ Homebrew 安装成功！")
+	return nil
 }
 
 func (i *Installer) installNodeJSMacPkg() error {
-	// 使用淘宝镜像源
-	nodeURL := "https://cdn.npmmirror.com/binaries/node/v20.10.0/node-v20.10.0.pkg"
+	i.addLog("准备下载并安装 Node.js...")
 
 	tempDir := os.TempDir()
 	installerPath := filepath.Join(tempDir, "node-installer.pkg")
+	scriptPath := filepath.Join(tempDir, "install_nodejs.sh")
 
-	i.addLog("下载 Node.js 安装程序...")
-	err := i.downloadFile(nodeURL, installerPath)
+	// 创建下载脚本，支持多个镜像源
+	scriptContent := fmt.Sprintf(`#!/bin/bash
+set -e
+
+INSTALLER_PATH="%s"
+
+echo "[STEP 1] Starting Node.js download..."
+
+# Mirror URLs
+MIRRORS=(
+    "https://cdn.npmmirror.com/binaries/node/v20.10.0/node-v20.10.0.pkg"
+    "https://nodejs.org/dist/v20.10.0/node-v20.10.0.pkg"
+)
+
+# Try each mirror
+for i in "${!MIRRORS[@]}"; do
+    MIRROR="${MIRRORS[$i]}"
+    echo "[STEP 2] Trying mirror $((i+1)): ${MIRROR}"
+    
+    if curl -L --connect-timeout 10 --max-time 300 -o "$INSTALLER_PATH" "$MIRROR" 2>&1; then
+        echo "[STEP 3] Download successful from mirror $((i+1))"
+        break
+    else
+        echo "Mirror $((i+1)) failed, trying next..."
+        rm -f "$INSTALLER_PATH"
+        if [ $i -eq $((${#MIRRORS[@]}-1)) ]; then
+            echo "ERROR: All mirrors failed"
+            exit 1
+        fi
+    fi
+done
+
+# Verify download
+if [ ! -f "$INSTALLER_PATH" ]; then
+    echo "ERROR: Download failed - file not found"
+    exit 1
+fi
+
+FILE_SIZE=$(stat -f%%z "$INSTALLER_PATH" 2>/dev/null || stat -c%%s "$INSTALLER_PATH" 2>/dev/null || echo 0)
+echo "[STEP 4] Downloaded file size: $((FILE_SIZE / 1024 / 1024)) MB"
+
+if [ "$FILE_SIZE" -lt 1000000 ]; then
+    echo "ERROR: Downloaded file too small, possibly corrupted"
+    exit 1
+fi
+
+echo "[STEP 5] Installing Node.js (requires admin password)..."
+echo "Please enter your password when prompted:"
+
+# Install with sudo
+if sudo installer -pkg "$INSTALLER_PATH" -target / -verboseR; then
+    echo "[STEP 6] Node.js installation completed successfully"
+    
+    # Verify installation
+    if /usr/local/bin/node --version >/dev/null 2>&1; then
+        NODE_VERSION=$(/usr/local/bin/node --version)
+        echo "Node.js installed successfully: $NODE_VERSION"
+        exit 0
+    else
+        echo "Warning: Installation completed but node command not found in PATH"
+        echo "You may need to restart your terminal"
+        exit 0
+    fi
+else
+    echo "ERROR: Installation failed"
+    exit 1
+fi
+`, installerPath)
+
+	// 写入脚本文件
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
 	if err != nil {
-		return fmt.Errorf("下载失败: %v", err)
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+	defer os.Remove(installerPath)
+
+	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
+
+	// 使用流式执行，支持实时输出
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = tempDir
+
+	// 使用流式执行避免UI卡住，并支持sudo密码输入
+	err = i.executeCommandWithStreaming(cmd)
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("Node.js 安装失败，退出代码: %d", exitErr.ExitCode())
+		}
+		return fmt.Errorf("Node.js 安装失败: %v", err)
 	}
 
-	i.addLog("运行 Node.js 安装程序...")
-	cmd := exec.Command("sudo", "installer", "-pkg", installerPath, "-target", "/")
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("安装失败: %v", err)
+	// 再次验证安装
+	if err := i.checkNodeJS(); err == nil {
+		i.addLog("✅ Node.js 安装并验证成功！")
+		return nil
 	}
 
-	// 清理安装文件
-	os.Remove(installerPath)
-
+	// 如果验证失败，但安装脚本成功，说明可能需要重启终端
+	i.addLog("⚠️ Node.js 已安装，但可能需要重启终端才能生效")
+	
+	// 尝试添加到当前进程的PATH
+	os.Setenv("PATH", fmt.Sprintf("/usr/local/bin:%s", os.Getenv("PATH")))
+	
 	return nil
 }
 
@@ -753,11 +1015,148 @@ exit /b 0
 }
 
 func (i *Installer) installGitMac() error {
-	// macOS 通常自带 Git，如果没有，使用 Homebrew
-	cmd := exec.Command("brew", "install", "git")
+	// 首先检查是否已经安装了 Git（通过 Xcode Command Line Tools）
+	if err := i.checkGit(); err == nil {
+		i.addLog("Git 已通过 Xcode Command Line Tools 安装")
+		return nil
+	}
 
-	// 使用流式执行避免UI卡住
-	return i.executeCommandWithStreaming(cmd)
+	// 检查是否有 Homebrew
+	cmd := exec.Command("brew", "--version")
+	if err := cmd.Run(); err == nil {
+		// 使用 Homebrew 安装，配置中国镜像源
+		i.addLog("配置 Homebrew 使用中国镜像源...")
+		
+		// 创建配置脚本
+		tempDir := os.TempDir()
+		brewScriptPath := filepath.Join(tempDir, "brew_install_git.sh")
+		
+		brewScript := `#!/bin/bash
+# 保存用户原有的 Homebrew 配置
+OLD_HOMEBREW_BREW_GIT_REMOTE="$HOMEBREW_BREW_GIT_REMOTE"
+OLD_HOMEBREW_CORE_GIT_REMOTE="$HOMEBREW_CORE_GIT_REMOTE"
+OLD_HOMEBREW_BOTTLE_DOMAIN="$HOMEBREW_BOTTLE_DOMAIN"
+
+# 检查是否已经配置了镜像源
+if [[ -n "$HOMEBREW_BOTTLE_DOMAIN" ]]; then
+    echo "检测到已配置 Homebrew 镜像源: $HOMEBREW_BOTTLE_DOMAIN"
+    echo "将使用现有配置..."
+else
+    # 只有在没有配置的情况下才设置镜像源
+    echo "配置 Homebrew 使用中国科技大学镜像源..."
+    export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.ustc.edu.cn/brew.git"
+    export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.ustc.edu.cn/homebrew-core.git"
+    export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles"
+    echo "HOMEBREW_BOTTLE_DOMAIN=$HOMEBREW_BOTTLE_DOMAIN"
+fi
+
+# 更新并安装 Git
+echo "更新 Homebrew..."
+brew update || echo "更新失败，继续尝试安装..."
+
+echo "安装 Git..."
+brew install git
+`
+		
+		if err := os.WriteFile(brewScriptPath, []byte(brewScript), 0755); err == nil {
+			defer os.Remove(brewScriptPath)
+			
+			cmd = exec.Command("bash", brewScriptPath)
+			cmd.Dir = tempDir
+			
+			// 使用流式执行避免UI卡住
+			if err := i.executeCommandWithStreaming(cmd); err == nil {
+				return nil
+			}
+			i.addLog("Homebrew 安装 Git 失败，尝试其他方法...")
+		}
+	}
+
+	// 如果没有 Homebrew 或 Homebrew 安装失败，尝试安装 Xcode Command Line Tools
+	i.addLog("尝试安装 Xcode Command Line Tools (包含 Git)...")
+	
+	// 创建安装脚本
+	tempDir := os.TempDir()
+	scriptPath := filepath.Join(tempDir, "install_git.sh")
+	
+	scriptContent := `#!/bin/bash
+set -e
+
+echo "[STEP 1] Checking for Xcode Command Line Tools..."
+
+# Check if git is already available through Xcode CLT
+if /usr/bin/git --version >/dev/null 2>&1; then
+    GIT_VERSION=$(/usr/bin/git --version)
+    echo "Git is already installed: $GIT_VERSION"
+    exit 0
+fi
+
+echo "[STEP 2] Installing Xcode Command Line Tools..."
+echo "This will open a dialog window. Please click 'Install' when prompted."
+echo "This process may take 10-15 minutes depending on your internet speed."
+
+# Trigger the installation dialog
+xcode-select --install 2>&1 || true
+
+# Wait for user to start installation
+echo ""
+echo "Waiting for installation to begin..."
+sleep 5
+
+# Check if installation is in progress
+while true; do
+    if pgrep -x "Install Command Line Developer Tools" >/dev/null 2>&1; then
+        echo "Installation in progress..."
+        sleep 10
+    else
+        # Check if installation completed
+        if /usr/bin/git --version >/dev/null 2>&1; then
+            GIT_VERSION=$(/usr/bin/git --version)
+            echo "[STEP 3] Git installed successfully: $GIT_VERSION"
+            exit 0
+        else
+            # Check if user cancelled
+            if xcode-select -p >/dev/null 2>&1; then
+                echo "Xcode Command Line Tools detected, checking Git..."
+                if /usr/bin/git --version >/dev/null 2>&1; then
+                    GIT_VERSION=$(/usr/bin/git --version)
+                    echo "Git installed successfully: $GIT_VERSION"
+                    exit 0
+                fi
+            fi
+            
+            echo "Installation may have been cancelled or failed."
+            echo "Please try running 'xcode-select --install' manually."
+            exit 1
+        fi
+    fi
+done
+`
+
+	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
+	if err != nil {
+		return fmt.Errorf("创建安装脚本失败: %v", err)
+	}
+	defer os.Remove(scriptPath)
+
+	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
+
+	// 使用流式执行
+	cmd = exec.Command("bash", scriptPath)
+	cmd.Dir = tempDir
+
+	err = i.executeCommandWithStreaming(cmd)
+	if err != nil {
+		return fmt.Errorf("Git 安装失败: %v. 请手动运行 'xcode-select --install' 安装 Xcode Command Line Tools", err)
+	}
+
+	// 验证安装
+	if err := i.checkGit(); err == nil {
+		i.addLog("✅ Git 安装成功！")
+		return nil
+	}
+
+	return fmt.Errorf("Git 安装失败，请手动安装 Xcode Command Line Tools 或使用 Homebrew")
 }
 
 func (i *Installer) installGitLinux() error {
