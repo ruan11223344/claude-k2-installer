@@ -479,21 +479,12 @@ func (i *Installer) installNodeJSMac() error {
 	// 检查是否有 Homebrew
 	cmd := exec.Command("brew", "--version")
 	if err := cmd.Run(); err != nil {
-		i.addLog("未检测到 Homebrew，尝试自动安装...")
-		
-		// 尝试自动安装 Homebrew
-		if err := i.installHomebrewCN(); err != nil {
-			i.addLog(fmt.Sprintf("Homebrew 安装失败: %v", err))
-			i.addLog("将尝试直接下载 Node.js 安装包...")
-			return i.installNodeJSMacPkg()
-		}
-		
-		// 重新检查 Homebrew 是否安装成功
-		cmd = exec.Command("brew", "--version")
-		if err := cmd.Run(); err != nil {
-			i.addLog("Homebrew 安装后仍无法使用，尝试直接下载安装包...")
-			return i.installNodeJSMacPkg()
-		}
+		i.addLog("未检测到 Homebrew，将使用官方安装包")
+		i.addLog("")
+		i.addLog("💡 提示：如需安装 Homebrew，可在终端运行：")
+		i.addLog(`   /bin/zsh -c "$(curl -fsSL https://gitee.com/cunkai/HomebrewCN/raw/master/Homebrew.sh)"`)
+		i.addLog("")
+		return i.installNodeJSMacPkg()
 	}
 
 	i.addLog("配置 Homebrew 使用中国镜像源并安装 Node.js...")
@@ -554,112 +545,6 @@ fi
 		return i.installNodeJSMacPkg()
 	}
 	
-	return nil
-}
-
-// installHomebrewCN 使用国内镜像安装 Homebrew
-func (i *Installer) installHomebrewCN() error {
-	i.addLog("准备安装 Homebrew（使用国内镜像）...")
-	
-	tempDir := os.TempDir()
-	scriptPath := filepath.Join(tempDir, "install_homebrew_cn.sh")
-	
-	// 创建安装脚本
-	scriptContent := `#!/bin/bash
-set -e
-
-echo "======================================="
-echo "开始安装 Homebrew（国内镜像加速）"
-echo "======================================="
-
-# 检查是否已经安装
-if command -v brew >/dev/null 2>&1; then
-    echo "Homebrew 已经安装"
-    brew --version
-    exit 0
-fi
-
-echo ""
-echo "正在下载并执行 Homebrew 国内安装脚本..."
-echo "安装过程中可能需要输入您的密码"
-echo ""
-
-# 使用国内镜像安装脚本
-export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.ustc.edu.cn/brew.git"
-export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.ustc.edu.cn/homebrew-core.git"
-export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles"
-
-# 下载并执行安装脚本
-if ! /bin/bash -c "$(curl -fsSL https://gitee.com/cunkai/HomebrewCN/raw/master/Homebrew.sh)"; then
-    echo "ERROR: Homebrew 安装失败"
-    exit 1
-fi
-
-# 验证安装
-if command -v brew >/dev/null 2>&1; then
-    echo ""
-    echo "Homebrew 安装成功！"
-    brew --version
-    exit 0
-else
-    # 尝试添加到 PATH
-    if [ -f "/opt/homebrew/bin/brew" ]; then
-        eval "$(/opt/homebrew/bin/brew shellenv)"
-        echo "Homebrew 已安装到 /opt/homebrew"
-    elif [ -f "/usr/local/bin/brew" ]; then
-        eval "$(/usr/local/bin/brew shellenv)"
-        echo "Homebrew 已安装到 /usr/local"
-    fi
-    
-    # 再次验证
-    if command -v brew >/dev/null 2>&1; then
-        echo "Homebrew 安装成功！"
-        brew --version
-        exit 0
-    else
-        echo "WARNING: Homebrew 已安装但未添加到 PATH"
-        echo "请重启终端或手动配置 PATH"
-        exit 1
-    fi
-fi
-`
-
-	// 写入脚本文件
-	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
-	if err != nil {
-		return fmt.Errorf("创建安装脚本失败: %v", err)
-	}
-	defer os.Remove(scriptPath)
-
-	i.addLog(fmt.Sprintf("执行安装脚本: %s", scriptPath))
-	i.addLog("提示：安装过程中需要输入您的密码")
-
-	// 使用流式执行
-	cmd := exec.Command("bash", scriptPath)
-	cmd.Dir = tempDir
-	
-	// 设置环境变量
-	cmd.Env = append(os.Environ(),
-		"HOMEBREW_BREW_GIT_REMOTE=https://mirrors.ustc.edu.cn/brew.git",
-		"HOMEBREW_CORE_GIT_REMOTE=https://mirrors.ustc.edu.cn/homebrew-core.git",
-		"HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles",
-	)
-
-	err = i.executeCommandWithStreaming(cmd)
-	if err != nil {
-		return fmt.Errorf("Homebrew 安装失败: %v", err)
-	}
-
-	// 尝试设置 PATH（针对 Apple Silicon Mac）
-	if _, err := os.Stat("/opt/homebrew/bin/brew"); err == nil {
-		os.Setenv("PATH", fmt.Sprintf("/opt/homebrew/bin:%s", os.Getenv("PATH")))
-		i.addLog("已添加 /opt/homebrew/bin 到 PATH")
-	} else if _, err := os.Stat("/usr/local/bin/brew"); err == nil {
-		os.Setenv("PATH", fmt.Sprintf("/usr/local/bin:%s", os.Getenv("PATH")))
-		i.addLog("已添加 /usr/local/bin 到 PATH")
-	}
-
-	i.addLog("✅ Homebrew 安装成功！")
 	return nil
 }
 
