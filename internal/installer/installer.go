@@ -742,9 +742,14 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 	// 创建 .claude.json 文件以跳过登录
 	claudeJsonPath := filepath.Join(home, ".claude.json")
 	backupPath := claudeJsonPath + ".backup"
-	claudeJson := `{
-  "hasCompletedOnboarding": true
-}`
+	// 创建完整的Claude配置，包含K2 API设置
+	claudeJson := fmt.Sprintf(`{
+  "hasCompletedOnboarding": true,
+  "apiKey": "%s",
+  "apiBaseUrl": "https://api.moonshot.cn/anthropic/",
+  "requestDelayMs": %d,
+  "maxConcurrentRequests": 1
+}`, apiKey, requestDelay)
 	
 	i.addLog(fmt.Sprintf("🔍 检查配置文件路径: %s", claudeJsonPath))
 	
@@ -776,6 +781,27 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 		i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
 	} else {
 		i.addLog("✅ .claude.json 文件已存在")
+	}
+
+	// 同时创建或更新 ~/.claude/settings.json 文件
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 创建.claude目录失败: %v", err))
+	} else {
+		settingsPath := filepath.Join(claudeDir, "settings.json")
+		settingsJson := fmt.Sprintf(`{
+  "apiKey": "%s",
+  "apiBaseUrl": "https://api.moonshot.cn/anthropic/",
+  "requestDelayMs": %d,
+  "maxConcurrentRequests": 1,
+  "hasCompletedOnboarding": true
+}`, apiKey, requestDelay)
+		
+		if err := os.WriteFile(settingsPath, []byte(settingsJson), 0644); err != nil {
+			i.addLog(fmt.Sprintf("⚠️ 创建settings.json失败: %v", err))
+		} else {
+			i.addLog("✅ 已创建 ~/.claude/settings.json 配置文件")
+		}
 	}
 
 	i.addLog("K2 API 配置完成")
