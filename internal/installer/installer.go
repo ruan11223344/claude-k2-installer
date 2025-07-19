@@ -2,6 +2,7 @@ package installer
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -739,70 +740,53 @@ echo "现在可以运行 'claude' 命令使用K2 API"
 		}
 	}
 
-	// 创建 .claude.json 文件以跳过登录
+	// 处理 .claude.json 文件
 	claudeJsonPath := filepath.Join(home, ".claude.json")
 	backupPath := claudeJsonPath + ".backup"
-	// 创建完整的Claude配置，包含K2 API设置
-	claudeJson := fmt.Sprintf(`{
-  "hasCompletedOnboarding": true,
-  "apiKey": "%s",
-  "apiBaseUrl": "https://api.moonshot.cn/anthropic/",
-  "requestDelayMs": %d,
-  "maxConcurrentRequests": 1
-}`, apiKey, requestDelay)
 	
-	i.addLog(fmt.Sprintf("🔍 检查配置文件路径: %s", claudeJsonPath))
+	i.addLog(fmt.Sprintf("🔍 处理配置文件: %s", claudeJsonPath))
 	
-	// 检查是否存在备份文件但主文件不存在
-	if _, err := os.Stat(claudeJsonPath); os.IsNotExist(err) {
-		i.addLog("📝 主配置文件不存在，尝试创建...")
-		
-		if _, backupErr := os.Stat(backupPath); backupErr == nil {
-			i.addLog("📋 发现备份文件，尝试恢复...")
-			// 从备份文件复制内容
-			if backupData, readErr := os.ReadFile(backupPath); readErr == nil {
-				if writeErr := os.WriteFile(claudeJsonPath, backupData, 0644); writeErr == nil {
-					i.addLog("✅ 已从备份文件恢复 .claude.json")
-				} else {
-					i.addLog(fmt.Sprintf("⚠️ 从备份恢复失败: %v", writeErr))
-					// 尝试强制创建新文件
-					i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
-				}
-			} else {
-				i.addLog(fmt.Sprintf("⚠️ 读取备份文件失败: %v", readErr))
-				i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
-			}
-		} else {
-			i.addLog("📄 没有备份文件，创建新配置文件...")
-			i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
+	// 读取或创建 .claude.json 配置
+	config := make(map[string]interface{})
+	
+	// 尝试读取现有配置
+	if data, err := os.ReadFile(claudeJsonPath); err == nil {
+		i.addLog("📖 读取现有配置文件...")
+		if err := json.Unmarshal(data, &config); err != nil {
+			i.addLog(fmt.Sprintf("⚠️ 解析配置文件失败: %v", err))
+			config = make(map[string]interface{})
 		}
-	} else if err != nil {
-		i.addLog(fmt.Sprintf("⚠️ 检查配置文件时出错: %v", err))
-		i.forceCreateClaudeConfig(claudeJsonPath, claudeJson)
+	} else if _, backupErr := os.Stat(backupPath); backupErr == nil {
+		i.addLog("📋 从备份文件读取配置...")
+		if backupData, readErr := os.ReadFile(backupPath); readErr == nil {
+			if err := json.Unmarshal(backupData, &config); err != nil {
+				i.addLog(fmt.Sprintf("⚠️ 解析备份文件失败: %v", err))
+				config = make(map[string]interface{})
+			}
+		}
 	} else {
-		i.addLog("✅ .claude.json 文件已存在")
+		i.addLog("📄 创建新的配置文件...")
+	}
+	
+	// 添加/更新K2配置
+	config["hasCompletedOnboarding"] = true
+	config["apiKey"] = apiKey
+	config["apiBaseUrl"] = "https://api.moonshot.cn/anthropic/"
+	config["requestDelayMs"] = requestDelay
+	config["maxConcurrentRequests"] = 1
+	
+	// 写回配置文件
+	if jsonData, err := json.MarshalIndent(config, "", "  "); err != nil {
+		i.addLog(fmt.Sprintf("⚠️ 序列化配置失败: %v", err))
+	} else {
+		if err := os.WriteFile(claudeJsonPath, jsonData, 0644); err != nil {
+			i.addLog(fmt.Sprintf("⚠️ 写入配置文件失败: %v", err))
+			i.forceCreateClaudeConfig(claudeJsonPath, string(jsonData))
+		} else {
+			i.addLog("✅ 已更新 .claude.json 配置文件")
+		}
 	}
 
-	// 同时创建或更新 ~/.claude/settings.json 文件
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		i.addLog(fmt.Sprintf("⚠️ 创建.claude目录失败: %v", err))
-	} else {
-		settingsPath := filepath.Join(claudeDir, "settings.json")
-		settingsJson := fmt.Sprintf(`{
-  "apiKey": "%s",
-  "apiBaseUrl": "https://api.moonshot.cn/anthropic/",
-  "requestDelayMs": %d,
-  "maxConcurrentRequests": 1,
-  "hasCompletedOnboarding": true
-}`, apiKey, requestDelay)
-		
-		if err := os.WriteFile(settingsPath, []byte(settingsJson), 0644); err != nil {
-			i.addLog(fmt.Sprintf("⚠️ 创建settings.json失败: %v", err))
-		} else {
-			i.addLog("✅ 已创建 ~/.claude/settings.json 配置文件")
-		}
-	}
 
 	i.addLog("K2 API 配置完成")
 	return nil
