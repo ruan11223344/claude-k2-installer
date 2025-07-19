@@ -303,258 +303,107 @@ func (i *Installer) installNodeJS() error {
 }
 
 func (i *Installer) installNodeJSWindows() error {
-	// 首先清理可能存在的残留环境变量
-	i.addLog("清理可能存在的Node.js残留配置...")
-
-	// 检查并清理空的nodejs目录
-	nodejsDir := `C:\Program Files\nodejs`
-	if info, err := os.Stat(nodejsDir); err == nil && info.IsDir() {
-		// 检查目录是否为空或只有残留文件
-		nodeExe := filepath.Join(nodejsDir, "node.exe")
-		if _, err := os.Stat(nodeExe); err != nil {
-			i.addLog(fmt.Sprintf("发现空的nodejs目录，尝试清理: %s", nodejsDir))
-			// 尝试删除空目录（如果不为空会失败，这样更安全）
-			if err := os.Remove(nodejsDir); err == nil {
-				i.addLog("✅ 已清理空的nodejs目录")
-			} else {
-				i.addLog(fmt.Sprintf("⚠️ 无法清理目录: %v", err))
-			}
-		}
-	}
-
-	// 使用批处理脚本下载和安装
-	i.addLog("创建Node.js安装脚本...")
+	i.addLog("开始 Node.js 安装流程...")
 
 	tempDir := os.TempDir()
 	scriptPath := filepath.Join(tempDir, "install_nodejs.bat")
-	logPath := filepath.Join(tempDir, "nodejs_install_detailed.log")
 
 	// 创建批处理脚本内容
-	scriptContent := fmt.Sprintf(`@echo off
-chcp 65001 >nul
+	scriptContent := `@echo off
 echo Starting Node.js installation...
-
-echo ========================================
-echo Node.js Installation Script
-echo ========================================
-echo.
-
-REM 设置日志文件
-set "LOG_FILE=%s"
-echo Starting installation at %%date%% %%time%% > "!LOG_FILE!"
-
-REM 第一步：清理残留
-echo [STEP 1] Cleaning up previous Node.js installations...
-echo [STEP 1] Cleaning up previous Node.js installations... >> "!LOG_FILE!"
-
-REM 检查并终止可能运行的 node 进程
-tasklist /FI "IMAGENAME eq node.exe" 2>NUL | find /I /N "node.exe">NUL
-if "%%ERRORLEVEL%%"=="0" (
-    echo Stopping running node processes...
-    echo Stopping running node processes... >> "!LOG_FILE!"
-    taskkill /F /IM node.exe >nul 2>&1
-    timeout /t 2 /nobreak >nul
-)
-
-REM 尝试卸载旧版本
-echo Attempting to uninstall old Node.js versions...
-echo Attempting to uninstall old Node.js versions... >> "!LOG_FILE!"
-
-REM 查找并卸载已安装的 Node.js
-for /f "tokens=1,2,*" %%%%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" /s 2^>nul ^| findstr /i "DisplayName.*Node.js"') do (
-    if "%%%%a"=="DisplayName" (
-        echo Found installed Node.js: %%%%c
-        echo Found installed Node.js: %%%%c >> "!LOG_FILE!"
-    )
-)
-
-REM 使用 wmic 尝试卸载
-wmic product where "name like '%%Node.js%%'" call uninstall /nointeractive >nul 2>&1
-if %%ERRORLEVEL%% EQU 0 (
-    echo Successfully uninstalled old Node.js
-    echo Successfully uninstalled old Node.js >> "!LOG_FILE!"
-    timeout /t 3 /nobreak >nul
-)
-
-REM 清理残留目录
-if exist "C:\Program Files\nodejs" (
-    echo Removing nodejs directory...
-    echo Removing nodejs directory... >> "!LOG_FILE!"
-    rmdir /s /q "C:\Program Files\nodejs" 2>nul
-    if exist "C:\Program Files\nodejs" (
-        echo WARNING: Could not remove nodejs directory, it may be in use
-        echo WARNING: Could not remove nodejs directory >> "!LOG_FILE!"
-    )
-)
-
-REM 第二步：下载新版本
-echo.
-echo [STEP 2] Downloading Node.js installer...
-echo [STEP 2] Downloading Node.js installer... >> "!LOG_FILE!"
 
 set "NODE_URL1=https://mirrors.aliyun.com/nodejs-release/v20.10.0/node-v20.10.0-x64.msi"
 set "NODE_URL2=https://cdn.npmmirror.com/binaries/node/v20.10.0/node-v20.10.0-x64.msi"
 set "NODE_URL3=https://nodejs.org/dist/v20.10.0/node-v20.10.0-x64.msi"
-set "INSTALLER_PATH=%%TEMP%%\node-installer.msi"
+set "INSTALLER_PATH=%TEMP%\node-installer.msi"
 
-REM 删除旧的安装文件
-if exist "!INSTALLER_PATH!" del /f /q "!INSTALLER_PATH!"
-
-REM 尝试下载
-set DOWNLOAD_SUCCESS=0
-for %%%%U in ("!NODE_URL1!" "!NODE_URL2!" "!NODE_URL3!") do (
-    if !DOWNLOAD_SUCCESS! EQU 0 (
-        echo Trying to download from: %%%%~U
-        echo Trying URL: %%%%~U >> "!LOG_FILE!"
-        
-        powershell -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '%%%%~U' -OutFile '!INSTALLER_PATH!' -TimeoutSec 60 -UseBasicParsing; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }" 2>> "!LOG_FILE!"
-        
-        if !ERRORLEVEL! EQU 0 (
-            if exist "!INSTALLER_PATH!" (
-                for %%%%F in ("!INSTALLER_PATH!") do set FILE_SIZE=%%%%~zF
-                if !FILE_SIZE! GTR 10485760 (
-                    echo Download successful [!FILE_SIZE! bytes]
-                    echo Download successful [!FILE_SIZE! bytes] >> "!LOG_FILE!"
-                    set DOWNLOAD_SUCCESS=1
-                ) else (
-                    echo File too small, corrupt download
-                    echo File too small [!FILE_SIZE! bytes] >> "!LOG_FILE!"
-                    del /f /q "!INSTALLER_PATH!" 2>nul
-                )
-            )
-        ) else (
-            echo Download failed from this mirror
-            echo Download failed >> "!LOG_FILE!"
-        )
-    )
+echo [STEP 1] Cleaning up old installations...
+taskkill /F /IM node.exe >nul 2>&1
+if exist "C:\Program Files\nodejs" (
+    rmdir /s /q "C:\Program Files\nodejs" 2>nul
 )
 
-if !DOWNLOAD_SUCCESS! EQU 0 (
-    echo ERROR: All download attempts failed
-    echo ERROR: All download attempts failed >> "!LOG_FILE!"
-    type "!LOG_FILE!"
-    exit /b 1
+echo [STEP 2] Downloading Node.js...
+echo Trying mirror 1...
+powershell -Command "try { $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%NODE_URL1%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 60 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 1
+    goto :install
 )
 
-REM 第三步：安装
-echo.
+echo Trying mirror 2...
+powershell -Command "try { $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%NODE_URL2%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 60 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 2
+    goto :install
+)
+
+echo Trying mirror 3...
+powershell -Command "try { $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%NODE_URL3%' -OutFile '%INSTALLER_PATH%' -TimeoutSec 60 -UseBasicParsing } catch { exit 1 }"
+if %ERRORLEVEL% EQU 0 (
+    echo Download successful from mirror 3
+    goto :install
+)
+
+echo ERROR: All download attempts failed
+exit /b 1
+
+:install
 echo [STEP 3] Installing Node.js...
-echo [STEP 3] Installing Node.js... >> "!LOG_FILE!"
+msiexec /i "%INSTALLER_PATH%" /qn /norestart ADDLOCAL=ALL ALLUSERS=1
+set INSTALL_RESULT=%ERRORLEVEL%
 
-REM 生成 MSI 日志文件路径
-set "MSI_LOG=%%TEMP%%\nodejs_msi_install.log"
-
-echo Running MSI installer with logging...
-echo MSI command: msiexec /i "!INSTALLER_PATH!" /qn /norestart ADDLOCAL=ALL ALLUSERS=1 /L*v "!MSI_LOG!" >> "!LOG_FILE!"
-
-msiexec /i "!INSTALLER_PATH!" /qn /norestart ADDLOCAL=ALL ALLUSERS=1 /L*v "!MSI_LOG!"
-set INSTALL_RESULT=!ERRORLEVEL!
-
-echo MSI installer returned code: !INSTALL_RESULT!
-echo MSI installer returned code: !INSTALL_RESULT! >> "!LOG_FILE!"
-
-if !INSTALL_RESULT! NEQ 0 (
-    echo ERROR: Installation failed with code !INSTALL_RESULT!
-    echo ERROR: Installation failed with code !INSTALL_RESULT! >> "!LOG_FILE!"
+if %INSTALL_RESULT% NEQ 0 (
+    echo ERROR: Installation failed with code %INSTALL_RESULT%
     
-    REM 显示 MSI 日志的错误部分
-    if exist "!MSI_LOG!" (
+    if %INSTALL_RESULT% EQU 1603 (
         echo.
-        echo Checking MSI log for errors...
-        echo === MSI Error Log === >> "!LOG_FILE!"
-        findstr /i "error return" "!MSI_LOG!" >> "!LOG_FILE!"
-        
-        REM 根据错误代码提供建议
-        if !INSTALL_RESULT! EQU 1603 (
-            echo ERROR 1603: Fatal error during installation
-            echo This usually means:
-            echo - Another installation is in progress
-            echo - Insufficient permissions
-            echo - Corrupted Windows Installer
-            echo.
-            echo Please try:
-            echo 1. Run as Administrator
-            echo 2. Restart computer and try again
-            echo 3. Check Windows Update
-        )
-        if !INSTALL_RESULT! EQU 1638 (
-            echo ERROR 1638: Another version is already installed
-            echo Please uninstall existing Node.js first
-        )
+        echo Error 1603 usually means:
+        echo - Another installation is in progress
+        echo - Need administrator permissions
+        echo - Windows Installer service issues
+        echo.
+        echo Please try:
+        echo 1. Run installer as Administrator
+        echo 2. Restart computer and try again
+        echo 3. Check Windows Update
     )
     
-    del /f /q "!INSTALLER_PATH!" 2>nul
-    type "!LOG_FILE!"
-    exit /b !INSTALL_RESULT!
+    if %INSTALL_RESULT% EQU 1638 (
+        echo.
+        echo Error 1638: Another version is already installed
+        echo Please uninstall existing Node.js first
+    )
+    
+    del /f /q "%INSTALLER_PATH%" 2>nul
+    exit /b %INSTALL_RESULT%
 )
 
-echo Installation completed successfully
-echo Installation completed successfully >> "!LOG_FILE!"
+echo Installation completed
+del /f /q "%INSTALLER_PATH%" 2>nul
 
-REM 清理安装文件
-del /f /q "!INSTALLER_PATH!" 2>nul
-if exist "!MSI_LOG!" del /f /q "!MSI_LOG!" 2>nul
-
-REM 第四步：验证安装
-echo.
 echo [STEP 4] Verifying installation...
-echo [STEP 4] Verifying installation... >> "!LOG_FILE!"
-
-REM 刷新环境变量
-echo Refreshing PATH environment variable...
-for /f "tokens=2*" %%%%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul') do set "SystemPath=%%%%B"
-for /f "tokens=2*" %%%%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "UserPath=%%%%B"
-set "PATH=!SystemPath!;!UserPath!"
-
-REM 等待文件系统更新
 timeout /t 2 /nobreak >nul
 
-REM 尝试多种方式验证
-set NODE_FOUND=0
-
-REM 方法1：直接调用 node
 where node >nul 2>&1
-if !ERRORLEVEL! EQU 0 (
-    for /f "tokens=*" %%%%i in ('node --version 2^>nul') do (
-        echo Node.js found in PATH: %%%%i
-        echo Node.js found in PATH: %%%%i >> "!LOG_FILE!"
-        set NODE_FOUND=1
+if %ERRORLEVEL% EQU 0 (
+    for /f "tokens=*" %%i in ('node --version 2^>nul') do echo Node.js installed successfully: %%i
+    exit /b 0
+)
+
+if exist "C:\Program Files\nodejs\node.exe" (
+    "C:\Program Files\nodejs\node.exe" --version >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo Node.js installed at: C:\Program Files\nodejs
+        echo You may need to restart terminal to use 'node' command
+        exit /b 0
     )
 )
 
-REM 方法2：检查标准安装位置
-if !NODE_FOUND! EQU 0 (
-    if exist "C:\Program Files\nodejs\node.exe" (
-        "C:\Program Files\nodejs\node.exe" --version >nul 2>&1
-        if !ERRORLEVEL! EQU 0 (
-            for /f "tokens=*" %%%%i in ('"C:\Program Files\nodejs\node.exe" --version 2^>nul') do (
-                echo Node.js installed at: C:\Program Files\nodejs [%%%%i]
-                echo Node.js installed at standard location [%%%%i] >> "!LOG_FILE!"
-                echo.
-                echo IMPORTANT: You need to restart your terminal to use 'node' command
-                set NODE_FOUND=1
-            )
-        )
-    )
-)
-
-if !NODE_FOUND! EQU 0 (
-    echo WARNING: Node.js installation completed but executable not found
-    echo This usually means you need to:
-    echo 1. Close and reopen your terminal/command prompt
-    echo 2. Or restart your computer
-    echo WARNING: Node.js not found in PATH >> "!LOG_FILE!"
-)
-
-echo.
-echo ========================================
-echo Installation process completed
-echo Log file: !LOG_FILE!
-echo ========================================
-
-REM 保留日志文件供调试
+echo WARNING: Installation completed but Node.js not found in PATH
+echo Please restart your terminal or computer
 exit /b 0
-`, logPath)
+`
 
 	// 写入脚本文件（使用UTF-8编码）
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -586,12 +435,6 @@ exit /b 0
 	}
 
 	if err != nil {
-		if logData, logErr := os.ReadFile(logPath); logErr == nil {
-			i.addLog("\n=== 详细安装日志 ===")
-			i.addLog(string(logData))
-			i.addLog("=== 日志结束 ===\n")
-		}
-
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code := exitErr.ExitCode()
 			switch code {
