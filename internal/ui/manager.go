@@ -528,11 +528,12 @@ echo 启动 Claude Code...
 claude
 `
 			os.WriteFile(refreshScript, []byte(refreshContent), 0755)
-			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\"", refreshScript))
+			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", refreshScript)
 		} else {
 			// 未勾选永久设置：使用临时脚本（如果存在）
 			if _, err := os.Stat(setupScript); err == nil {
-				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("\"%s\" && claude", setupScript))
+				cmdStr := fmt.Sprintf("call \"%s\" && claude", setupScript)
+				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", cmdStr)
 			} else {
 				cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "claude")
 			}
